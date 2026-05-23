@@ -1,8 +1,8 @@
 'use client';
 
 import { useRef, useCallback, useState, useEffect } from 'react';
-import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { OrbitControls, Text } from '@react-three/drei';
+import { Canvas, useFrame } from '@react-three/fiber';
+import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 
 const MAX_ACCUMULATED_POINTS = 80_000;
@@ -37,22 +37,32 @@ function heightColor(z: number, minZ: number, maxZ: number): [number, number, nu
 	return [r, g, b];
 }
 
-/* ── Point cloud geometry – uses imperative Three.js API for reliable buffer updates ── */
-function PointCloudMesh({ points }: { points: number[][] }) {
+/* ──────────────────────────────────────────────────────────────
+   Shared refs that live OUTSIDE React state so updates never
+   trigger Canvas re-renders.
+   ────────────────────────────────────────────────────────────── */
+type PointStore = {
+	points: number[][];
+	dirty: boolean;
+};
+
+/* ── Point cloud – reads from shared ref via useFrame (no re-renders) ── */
+function PointCloudMesh({ store }: { store: React.MutableRefObject<PointStore> }) {
 	const geomRef = useRef<THREE.BufferGeometry>(null);
 
-	useEffect(() => {
+	useFrame(() => {
+		if (!store.current.dirty || !geomRef.current) return;
+		store.current.dirty = false;
+
+		const points = store.current.points;
 		const geom = geomRef.current;
-		if (!geom) return;
 
 		if (!points.length) {
 			geom.setAttribute('position', new THREE.Float32BufferAttribute([], 3));
 			geom.setAttribute('color', new THREE.Float32BufferAttribute([], 3));
-			geom.computeBoundingSphere();
 			return;
 		}
 
-		// Compute z range for coloring
 		let minZ = Infinity;
 		let maxZ = -Infinity;
 		for (let i = 0; i < points.length; i++) {
@@ -66,7 +76,6 @@ function PointCloudMesh({ points }: { points: number[][] }) {
 
 		for (let i = 0; i < points.length; i++) {
 			const [x, y, z] = points[i];
-			// Webots: X=forward, Y=left, Z=up → Three.js: X=right, Y=up, Z=toward-camera
 			positions[i * 3] = x;
 			positions[i * 3 + 1] = z;
 			positions[i * 3 + 2] = -y;
@@ -77,10 +86,16 @@ function PointCloudMesh({ points }: { points: number[][] }) {
 			colors[i * 3 + 2] = b;
 		}
 
+		// Dispose old attributes before setting new ones
+		const oldPos = geom.getAttribute('position');
+		const oldCol = geom.getAttribute('color');
+		if (oldPos) (oldPos as THREE.BufferAttribute).array = new Float32Array(0);
+		if (oldCol) (oldCol as THREE.BufferAttribute).array = new Float32Array(0);
+
 		geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
 		geom.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
 		geom.computeBoundingSphere();
-	}, [points]);
+	});
 
 	return (
 		<points frustumCulled={false}>
@@ -99,7 +114,7 @@ function PointCloudMesh({ points }: { points: number[][] }) {
 
 /* ── Drone marker at origin ── */
 function DroneMarker() {
-	const ref = useRef<THREE.Mesh>(null);
+	const ref = useRef<THREE.Group>(null);
 
 	useFrame((_, delta) => {
 		if (ref.current) {
@@ -108,18 +123,11 @@ function DroneMarker() {
 	});
 
 	return (
-		<group position={[0, 0.15, 0]}>
-			<mesh ref={ref}>
+		<group position={[0, 0.15, 0]} ref={ref}>
+			<mesh>
 				<octahedronGeometry args={[0.2, 0]} />
-				<meshStandardMaterial
-					color="#ff6b35"
-					emissive="#ff6b35"
-					emissiveIntensity={0.6}
-					transparent
-					opacity={0.9}
-				/>
+				<meshBasicMaterial color="#ff6b35" transparent opacity={0.9} />
 			</mesh>
-			{/* Glow ring */}
 			<mesh rotation={[-Math.PI / 2, 0, 0]}>
 				<ringGeometry args={[0.25, 0.32, 32]} />
 				<meshBasicMaterial color="#ff6b35" transparent opacity={0.3} side={THREE.DoubleSide} />
@@ -128,23 +136,30 @@ function DroneMarker() {
 	);
 }
 
-/* ── Grid helper ── */
+/* ── Grid ── */
 function SceneGrid() {
-	return (
-		<group>
-			<gridHelper args={[60, 60, '#1a3a4a', '#0e1e28']} position={[0, -0.01, 0]} />
-			<Text position={[32, 0, 0]} fontSize={0.6} color="#ff6b35">
-				X
-			</Text>
-			<Text position={[0, 0, -32]} fontSize={0.6} color="#4ecdc4">
-				Y
-			</Text>
-			<Text position={[0, 32, 0]} fontSize={0.6} color="#ffe66d">
-				Z
-			</Text>
-		</group>
-	);
+	return <gridHelper args={[60, 60, '#1a3a4a', '#0e1e28']} position={[0, -0.01, 0]} />;
 }
+
+/* ── The actual Three.js scene (never re-renders from parent state) ── */
+const Scene = ({ store }: { store: React.MutableRefObject<PointStore> }) => {
+	return (
+		<>
+			<ambientLight intensity={0.4} />
+			<directionalLight position={[10, 20, 10]} intensity={0.6} />
+			<SceneGrid />
+			<DroneMarker />
+			<PointCloudMesh store={store} />
+			<OrbitControls
+				enableDamping
+				dampingFactor={0.12}
+				minDistance={1}
+				maxDistance={100}
+				maxPolarAngle={Math.PI * 0.85}
+			/>
+		</>
+	);
+};
 
 /* ── Main exported component ── */
 export default function PointCloudViewer({
@@ -154,28 +169,26 @@ export default function PointCloudViewer({
 	className?: string;
 	style?: React.CSSProperties;
 }) {
-	const [allPoints, setAllPoints] = useState<number[][]>([]);
+	// Point data stored in a ref – never triggers Canvas re-renders
+	const storeRef = useRef<PointStore>({ points: [], dirty: false });
 	const [pointCount, setPointCount] = useState(0);
 	const [connected, setConnected] = useState(false);
-
-	const addPoints = useCallback((newPoints: number[][]) => {
-		if (!newPoints.length) return;
-		setAllPoints((prev) => {
-			const combined = [...prev, ...newPoints];
-			if (combined.length > MAX_ACCUMULATED_POINTS) {
-				return combined.slice(combined.length - MAX_ACCUMULATED_POINTS);
-			}
-			return combined;
-		});
-	}, []);
+	const countTimerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
 
 	const clearPoints = useCallback(() => {
-		setAllPoints([]);
+		storeRef.current.points = [];
+		storeRef.current.dirty = true;
+		setPointCount(0);
 	}, []);
 
+	/* Periodically sync the point count to React state for the HUD
+	   (throttled to avoid excessive re-renders) */
 	useEffect(() => {
-		setPointCount(allPoints.length);
-	}, [allPoints]);
+		countTimerRef.current = setInterval(() => {
+			setPointCount(storeRef.current.points.length);
+		}, 500);
+		return () => clearInterval(countTimerRef.current);
+	}, []);
 
 	/* Connect to the dashboard WS to receive pointcloud broadcasts */
 	useEffect(() => {
@@ -199,7 +212,13 @@ export default function PointCloudViewer({
 				try {
 					const payload = JSON.parse(event.data);
 					if (payload.type === 'pointcloud' && Array.isArray(payload.points)) {
-						addPoints(payload.points);
+						const store = storeRef.current;
+						const combined = [...store.points, ...payload.points];
+						store.points =
+							combined.length > MAX_ACCUMULATED_POINTS
+								? combined.slice(combined.length - MAX_ACCUMULATED_POINTS)
+								: combined;
+						store.dirty = true;
 					}
 				} catch {
 					// ignore
@@ -213,7 +232,7 @@ export default function PointCloudViewer({
 			clearTimeout(reconnectTimer);
 			ws?.close();
 		};
-	}, [addPoints]);
+	}, []);
 
 	return (
 		<div className={className} style={{ position: 'relative', ...style }}>
@@ -277,25 +296,13 @@ export default function PointCloudViewer({
 			<Canvas
 				camera={{ position: [10, 8, 10], fov: 55, near: 0.1, far: 300 }}
 				style={{ width: '100%', height: '100%', borderRadius: 'inherit' }}
+				onCreated={({ scene, gl }) => {
+					scene.background = new THREE.Color('#080c10');
+					scene.fog = new THREE.Fog('#080c10', 40, 80);
+					gl.setClearColor('#080c10', 1);
+				}}
 			>
-				{/* Scene background – no alpha so it actually renders */}
-				<color attach="background" args={['#080c10']} />
-				<fog attach="fog" args={['#080c10', 40, 80]} />
-
-				<ambientLight intensity={0.4} />
-				<directionalLight position={[10, 20, 10]} intensity={0.6} />
-
-				<SceneGrid />
-				<DroneMarker />
-				<PointCloudMesh points={allPoints} />
-
-				<OrbitControls
-					enableDamping
-					dampingFactor={0.12}
-					minDistance={1}
-					maxDistance={100}
-					maxPolarAngle={Math.PI * 0.85}
-				/>
+				<Scene store={storeRef} />
 			</Canvas>
 		</div>
 	);
