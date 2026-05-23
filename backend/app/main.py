@@ -13,7 +13,7 @@ from typing import Any, Dict, Optional, Set
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 try:
     from aiortc import RTCPeerConnection, RTCSessionDescription, RTCIceCandidate
@@ -52,8 +52,11 @@ class DroneState:
         self.command_ts: float = 0.0
         self.camera_frame: Optional[bytes] = None
         self.camera_ts: float = 0.0
+        self.pointcloud_points: list = []
+        self.pointcloud_ts: float = 0.0
         self.lock = asyncio.Lock()
         self.camera_lock = asyncio.Lock()
+        self.pointcloud_lock = asyncio.Lock()
 
 
 state = DroneState()
@@ -106,6 +109,14 @@ async def camera_mjpeg() -> StreamingResponse:
         frame_generator(),
         media_type="multipart/x-mixed-replace; boundary=frame",
     )
+
+
+@app.get("/api/v1/drone/pointcloud")
+async def pointcloud_data() -> JSONResponse:
+    async with state.pointcloud_lock:
+        points = state.pointcloud_points
+        ts = state.pointcloud_ts
+    return JSONResponse({"points": points, "timestamp": ts})
 
 
 if AIORTC_AVAILABLE:
@@ -221,6 +232,19 @@ async def drone_controller(ws: WebSocket) -> None:
                 async with state.camera_lock:
                     state.camera_frame = frame
                     state.camera_ts = payload.get("timestamp", time.time())
+            elif payload_type == "pointcloud":
+                points = payload.get("points", [])
+                ts = payload.get("timestamp", time.time())
+                async with state.pointcloud_lock:
+                    state.pointcloud_points = points
+                    state.pointcloud_ts = ts
+                await broadcast_dashboard(
+                    {
+                        "type": "pointcloud",
+                        "points": points,
+                        "timestamp": ts,
+                    }
+                )
     except WebSocketDisconnect:
         async with controller_lock:
             if controller_ws is ws:

@@ -41,6 +41,7 @@ class Mavic(Robot):
     COMMAND_TIMEOUT = 0.5
     TELEMETRY_PERIOD = 0.1
     CAMERA_PERIOD = 0.2
+    POINTCLOUD_PERIOD = 1.0
     WS_URL = "ws://127.0.0.1:8001/api/v1/drone/controller"
 
     def __init__(self):
@@ -66,6 +67,14 @@ class Mavic(Robot):
         self.camera_roll_motor = self.getDevice("camera roll")
         self.camera_pitch_motor = self.getDevice("camera pitch")
 
+        self.lidar = None
+        try:
+            self.lidar = self.getDevice("lidar")
+            self.lidar.enable(self.time_step)
+            self.lidar.enablePointCloud()
+        except Exception:
+            self.lidar = None
+
         self.front_left_motor = self.getDevice("front left propeller")
         self.front_right_motor = self.getDevice("front right propeller")
         self.rear_left_motor = self.getDevice("rear left propeller")
@@ -83,6 +92,7 @@ class Mavic(Robot):
         self.target_altitude = 1.0
         self._last_telemetry_time = 0.0
         self._last_camera_time = 0.0
+        self._last_pointcloud_time = 0.0
         self._command_ts = 0.0
         self._last_altitude_command_ts = 0.0
         self._command = {
@@ -285,9 +295,42 @@ class Mavic(Robot):
                         {"type": "camera", "frame": frame_b64, "timestamp": sim_time}
                     )
                     self._last_camera_time = sim_time
+
                 except Exception as exc:
                     print(f"Camera capture failed: {exc}")
                     self._last_camera_time = sim_time
+
+            if (
+                WEBSOCKETS_AVAILABLE
+                and self.lidar is not None
+                and sim_time - self._last_pointcloud_time >= self.POINTCLOUD_PERIOD
+            ):
+                try:
+                    points = self._get_lidar_points()
+                    if points:
+                        self._queue_send(
+                            {"type": "pointcloud", "points": points, "timestamp": sim_time}
+                        )
+                    self._last_pointcloud_time = sim_time
+                except Exception as exc:
+                    print(f"Point cloud capture failed: {exc}")
+                    self._last_pointcloud_time = sim_time
+
+    def _get_lidar_points(self):
+        """Extract (x, y, z) points from LiDAR point cloud, filtering invalid values."""
+        raw_points = self.lidar.getPointCloud()
+        if not raw_points:
+            return []
+
+        points = []
+        for p in raw_points:
+            if np.isfinite(p.x) and np.isfinite(p.y) and np.isfinite(p.z):
+                points.append([
+                    round(float(p.x), 3),
+                    round(float(p.y), 3),
+                    round(float(p.z), 3),
+                ])
+        return points
 
 
 robot = Mavic()
