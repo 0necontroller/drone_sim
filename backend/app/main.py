@@ -7,6 +7,8 @@ import io
 import json
 import os
 import time
+import cv2
+import numpy as np
 
 from dotenv import load_dotenv
 from typing import Any, Dict, Optional, Set
@@ -25,6 +27,23 @@ try:
     AIORTC_AVAILABLE = True
 except Exception:
     AIORTC_AVAILABLE = False
+
+from pathlib import Path
+from ultralytics import YOLO
+
+# 1. Dynamically get the absolute folder path of app/main.py
+SCRIPT_DIR = Path(__file__).resolve().parent
+
+MODEL_PATH = SCRIPT_DIR / "yolo26n.pt"
+
+
+# Load YOLO globally once when FastAPI initializes (using Nano for real-time speed)
+try:
+    yolo_model = YOLO(str(MODEL_PATH))
+except Exception as e:
+    print(f"Warning: Could not load YOLO model: {e}")
+    yolo_model = None
+
 
 load_dotenv()
 
@@ -229,6 +248,43 @@ async def drone_controller(ws: WebSocket) -> None:
                     frame = base64.b64decode(frame_b64)
                 except Exception:
                     continue
+                
+                # --- LIVE INJECT YOLO PROCESSING ---
+                if yolo_model is not None:
+                    try:
+                        # 1. Convert JPEG byte string into a NumPy Matrix (OpenCV format)
+                        nparr = np.frombuffer(frame, np.uint8)
+                        cv_img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+                        if cv_img is not None:
+                            # 2. Run inference (classes=0 filters for pedestrians only)
+                            results = yolo_model.predict(source=cv_img, classes=[0,2], conf=0.45, verbose=False)
+                            
+                            # 3. Draw bounding boxes over the image matrix
+                            for result in results:
+                                names = result.names
+                                for box in result.boxes:
+                                    x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+                                    conf = float(box.conf)
+                                    cls_id = int(box.cls.item())
+                                    label = names[cls_id].capitalize() # e.g., "Person", "Car", "Truck"
+                                    
+                                    # Set box color based on classification (Green for People, Blue for Vehicles)
+                                    box_color = (0, 255, 0) if cls_id == 0 else (255, 100, 0)
+                                    
+                                    # Draw bounding box and the detected type label
+                                    cv2.rectangle(cv_img, (x1, y1), (x2, y2), box_color, 2)
+                                    cv2.putText(cv_img, f"{label} {conf:.2f}", (x1, y1 - 10),
+                                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, box_color, 2)
+                            
+                            # 4. Re-compress the annotated matrix back into standard JPEG bytes
+                            _, encoded_img = cv2.imencode('.jpg', cv_img)
+                            frame = encoded_img.tobytes()
+                    except Exception as img_err:
+                        # Fallback to saving raw frames if image manipulation fails
+                        print(f"YOLO Processing failed, bypassing: {img_err}")
+                # -----------------------------------
+
                 async with state.camera_lock:
                     state.camera_frame = frame
                     state.camera_ts = payload.get("timestamp", time.time())

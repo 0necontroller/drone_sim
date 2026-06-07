@@ -14,6 +14,7 @@ EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/project
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/trees/protos/Pine.proto"
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/trees/protos/Forest.proto"
 EXTERNPROTO "../protos/Mavic2Pro.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/humans/pedestrian/protos/Pedestrian.proto"
 
 WorldInfo {
   info [
@@ -28,8 +29,8 @@ WorldInfo {
   }
 }
 Viewpoint {
-  orientation 0.14428384819576393 0.018224462008032384 -0.9893685057319843 3.0017756377290556
-  position 3.985133678933402 -0.7052334496356221 1.1317537516087952
+  orientation 0.04205732763619796 0.018007445616985366 -0.9989529083467612 3.2845788944752967
+  position 8.096939678132271 -1.2874578830086358 1.3059177633761316
   near 0.2
   follow "Mavic 2 PRO"
   followSmoothness 0.2
@@ -44,6 +45,117 @@ Floor {
   tileSize 6 6
   appearance SandyGround {
   }
+}
+Fluid {
+  translation -22.73 21.3 0
+  children [
+    Shape {
+      appearance PBRAppearance {
+        baseColor 0 0.3 0.8
+        transparency 0.2
+        roughness 0.1
+      }
+      geometry Box {
+        size 30 25 1.6
+      }
+    }
+  ]
+  boundingObject Box {
+    size 30 25 1.6
+  }
+}
+Fluid {
+  translation 52.49 0.33 -0.1
+  children [
+    Shape {
+      appearance PBRAppearance {
+        baseColor 0 0.3 0.8
+        transparency 0.2
+        roughness 0.1
+      }
+      geometry Box {
+        size 30 25 1.6
+      }
+    }
+  ]
+  boundingObject Box {
+    size 30 25 1.6
+  }
+}
+Fluid {
+  translation -51.01 -33.6 0
+  children [
+    Shape {
+      appearance PBRAppearance {
+        baseColor 0 0.3 0.8
+        transparency 0.2
+        roughness 0.1
+      }
+      geometry Box {
+        size 30 25 1.6
+      }
+    }
+  ]
+  boundingObject Box {
+    size 30 25 1.6
+  }
+}
+Fluid {
+  translation 0 -14.6 0
+  children [
+    Shape {
+      appearance PBRAppearance {
+        baseColor 0 0.3 0.8
+        transparency 0.2
+        roughness 0.1
+      }
+      geometry Box {
+        size 20 15 1.6
+      }
+    }
+  ]
+  boundingObject Box {
+    size 20 15 1.6
+  }
+}
+Pedestrian {
+  translation 7.09 22.66 1.37
+  name "pedestrian(5)"
+}
+Pedestrian {
+  translation 53.75 2.36 2.26
+  name "pedestrian(8)"
+  shirtColor 0.909865 0.909483 0.236072
+}
+Pedestrian {
+  translation 50.63 -5.83 2.64
+  name "pedestrian(9)"
+  shirtColor 0.907195 0.126513 0.0757153
+}
+Pedestrian {
+  translation -30.31 28.32 1.37
+  name "pedestrian(4)"
+}
+Pedestrian {
+  translation -31.29 29.93 1.37
+  name "pedestrian(2)"
+  shirtColor 0.807797 0.275807 0.0820478
+}
+Pedestrian {
+  translation 4.52 -20.08 1.47
+  name "pedestrian(6)"
+  shirtColor 0.807797 0.275807 0.0820478
+}
+Pedestrian {
+  translation -11.03 -4.3 1.27
+}
+Pedestrian {
+  translation -36.68 1.95 1.37
+  name "pedestrian(7)"
+}
+Pedestrian {
+  translation -46.87 -22.18 1.37
+  name "pedestrian(3)"
 }
 Road {
   translation -43.8 9.2 0.01
@@ -61,6 +173,11 @@ Road {
   appearance Pavement {
     type "black stone"
   }
+}
+Pedestrian {
+  translation -19.47 10.17 1.27
+  name "pedestrian(1)"
+  shirtColor 0.807797 0.275807 0.0820478
 }
 Windmill {
   translation -43.8656 -19.8433 0
@@ -94,6 +211,24 @@ CardboardBox {
 TeslaModel3Simple {
   translation -41.5139 4.34169 0.31
   rotation 0 0 1 -0.2618053071795865
+}
+TeslaModel3Simple {
+  translation 7 -6.95104 0.41
+  rotation 0 0 -1 5.92017e-06
+  color 0.376608 0.894774 0.92929
+  name "vehicle(1)"
+}
+TeslaModel3Simple {
+  translation 49.29 -5.77116 0.51
+  rotation 0.9999999999912379 -2.9600799999740636e-06 -2.9600899999740634e-06 1.5708
+  color 0.331411 0.91281 0.137789
+  name "vehicle(2)"
+}
+TeslaModel3Simple {
+  translation 52.3 1.95869 0.51
+  rotation 0.9999999999953044 -2.9600799999861007e-06 7.931519999962757e-07 -2.6179953071795863
+  color 0.993347 0.969909 1
+  name "vehicle(3)"
 }
 Pine {
   translation -14.0083 -14.4828 0
