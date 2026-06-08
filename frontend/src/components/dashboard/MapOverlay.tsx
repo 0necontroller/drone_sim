@@ -188,6 +188,18 @@ export default function MapOverlay({ wsUrl }: MapOverlayProps) {
 			people.forEach((person) => {
 				const [cx, cy] = worldToCanvas(person.x, person.y);
 
+				// 4.0-meter Safety/Detection Zone Circle (Euclidean)
+				const zoneRadius = 4.0 * (MAP_SIZE_PX / MAP_METERS);
+				ctx.beginPath();
+				ctx.arc(cx, cy, zoneRadius, 0, Math.PI * 2);
+				ctx.fillStyle = 'rgba(239, 68, 68, 0.08)'; // Shaded zone
+				ctx.fill();
+				ctx.strokeStyle = 'rgba(239, 68, 68, 0.3)';
+				ctx.lineWidth = 1.2;
+				ctx.setLineDash([5, 5]); // Dashed border indicating zone boundary
+				ctx.stroke();
+				ctx.setLineDash([]); // Reset line dash
+
 				// Pulsing radar target halo
 				const pulseRadius = 12 + Math.sin(Date.now() / 150) * 4;
 				ctx.beginPath();
@@ -366,6 +378,10 @@ export default function MapOverlay({ wsUrl }: MapOverlayProps) {
 					<span className="flex items-center gap-1.5">
 						<ShieldAlert className="h-4 w-4 text-red-500" />
 						Detected Victim
+					</span>
+					<span className="flex items-center gap-1.5">
+						<span className="h-3 w-3 rounded-full bg-red-50 border border-red-300 border-dashed" />
+						Detection Zone (4m)
 					</span>
 				</div>
 			</div>

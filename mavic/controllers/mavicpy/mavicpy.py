@@ -185,9 +185,12 @@ class Mavic(Robot):
             self.front_left_led.set(led_state)
             self.front_right_led.set(1 - led_state)
 
-            # Stabilize the camera using gyro feedback.
-            self.camera_roll_motor.setPosition(-0.115 * roll_velocity)
-            self.camera_pitch_motor.setPosition(-0.1 * pitch_velocity)
+            # Stabilize the camera using gyro feedback, and tilt it down by 0.349 rad (~20 deg) to scan the ground.
+            # Clamp position commands to [-0.5, 0.5] to respect Webots motor joint limits and avoid warnings.
+            camera_roll_pos = clamp(-0.115 * roll_velocity, -0.5, 0.5)
+            camera_pitch_pos = clamp(0.349 - 0.1 * pitch_velocity, -0.5, 0.5)
+            self.camera_roll_motor.setPosition(camera_roll_pos)
+            self.camera_pitch_motor.setPosition(camera_pitch_pos)
 
             roll_disturbance = 0.0
             pitch_disturbance = 0.0

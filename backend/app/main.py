@@ -311,6 +311,16 @@ async def drone_ws(ws: WebSocket) -> None:
                 }
             )
         )
+    # Immediately send existing detections to the newly connected client
+    await ws.send_text(
+        json.dumps(
+            {
+                "type": "detections",
+                "people": detected_people,
+                "timestamp": time.time(),
+            }
+        )
+    )
     try:
         while True:
             message = await ws.receive_text()
@@ -437,9 +447,11 @@ async def drone_controller(ws: WebSocket) -> None:
 
                     # Only steer & pitch if we are at safe target altitude, OR if landing
                     if drone_z >= 5.0 or should_land:
-                        yaw_cmd = float(max(-1.3, min(1.3, yaw_err * 1.0))) if not should_land else 0.0
+                        # Limit yaw rate to 0.4 to prevent gyroscopic instability/tumbling
+                        yaw_cmd = float(max(-0.4, min(0.4, yaw_err * 0.5))) if not should_land else 0.0
                         if not should_land and abs(yaw_err) < 0.25:
-                            pitch_cmd = -2.0 if dist > 2.0 else -0.5
+                            # Use a moderate pitch of -0.5 for stable forward flight
+                            pitch_cmd = -0.5 if dist > 2.0 else -0.2
                         else:
                             pitch_cmd = 0.0
                     else:
@@ -472,7 +484,13 @@ async def drone_controller(ws: WebSocket) -> None:
                     continue
                 
                 # --- LIVE INJECT YOLO PROCESSING ---
-                if yolo_model is not None:
+                is_searching = (
+                    autonomous_mode 
+                    and active_flight_path 
+                    and 0 < current_waypoint_idx < len(active_flight_path)
+                )
+
+                if yolo_model is not None and is_searching:
                     try:
                         # 1. Convert JPEG byte string into a NumPy Matrix (OpenCV format)
                         nparr = np.frombuffer(frame, np.uint8)
@@ -483,13 +501,16 @@ async def drone_controller(ws: WebSocket) -> None:
                             results = yolo_model.predict(source=cv_img, classes=[0,2], conf=0.40, verbose=False)
                             
                             # 3. Draw bounding boxes over the image matrix
+                            any_detected = False
                             for result in results:
                                 names = result.names
                                 for box in result.boxes:
                                     x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
                                     conf = float(box.conf)
                                     cls_id = int(box.cls.item())
-                                    label = names[cls_id].capitalize() # e.g., "Person", "Car", "Truck"
+                                    label = names[cls_id].capitalize() # e.g., "Person", "Car"
+                                    any_detected = True
+                                    print(f"[YOLO] Detected {label} (class {cls_id}) with confidence {conf:.2f}")
                                     
                                     # Set box color based on classification (Green for People, Blue for Vehicles)
                                     box_color = (0, 255, 0) if cls_id == 0 else (255, 100, 0)
@@ -499,9 +520,10 @@ async def drone_controller(ws: WebSocket) -> None:
                                     cv2.putText(cv_img, f"{label} {conf:.2f}", (x1, y1 - 10),
                                                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, box_color, 2)
                             
-                            # 4. Re-compress the annotated matrix back into standard JPEG bytes
-                            _, encoded_img = cv2.imencode('.jpg', cv_img)
-                            frame = encoded_img.tobytes()
+                            if any_detected:
+                                # 4. Re-compress the annotated matrix back into standard JPEG bytes
+                                _, encoded_img = cv2.imencode('.jpg', cv_img)
+                                frame = encoded_img.tobytes()
 
                             # After YOLO inference, also project detections to world coordinates
                             geo_detections = []
@@ -519,7 +541,8 @@ async def drone_controller(ws: WebSocket) -> None:
 
                             for result in results:
                                 for box in result.boxes:
-                                    if int(box.cls.item()) != 0:   # persons only for geo-tagging
+                                    cls_id = int(box.cls.item())
+                                    if cls_id != 0:   # persons only for geo-tagging
                                         continue
                                     x1, y1, x2, y2 = box.xyxy[0].tolist()
                                     u = (x1 + x2) / 2.0
@@ -576,23 +599,31 @@ async def drone_controller(ws: WebSocket) -> None:
                                     R_drone = R_z @ R_x @ R_y
                                     ray_world = R_drone @ ray_drone
 
+                                    print(f"[Geo] u={u:.1f}, v={v:.1f}, ray_world[2]={ray_world[2]:.4f}")
+
                                     if ray_world[2] >= 0:
-                                        continue   # ray points skyward
+                                        print(f"[Geo] Warning: ray points skyward (ray_world[2] = {ray_world[2]:.4f}). Ignoring.")
+                                        continue
 
                                     drone_z = drone_xyz[2]
                                     t = -drone_z / ray_world[2]
                                     world_x = drone_xyz[0] + t * ray_world[0]
                                     world_y = drone_xyz[1] + t * ray_world[1]
 
+                                    print(f"[Geo] Projected victim coordinates: x={world_x:.2f}, y={world_y:.2f} (drone_z={drone_z:.2f}, t={t:.2f})")
                                     geo_detections.append({"x": round(float(world_x), 2), "y": round(float(world_y), 2)})
 
-                            # Deduplicate and store
+                            # Deduplicate and store using 4.0m Euclidean distance zone check
                             for det in geo_detections:
                                 if not any(
-                                    abs(det["x"] - p["x"]) < 1.5 and abs(det["y"] - p["y"]) < 1.5
+                                    math.sqrt((det["x"] - p["x"])**2 + (det["y"] - p["y"])**2) < 4.0
                                     for p in detected_people
                                 ):
-                                    detected_people.append({**det, "ts": time.time()})
+                                    new_person = {**det, "ts": time.time()}
+                                    detected_people.append(new_person)
+                                    print(f"[Geo] Logged NEW victim at x={new_person['x']:.2f}, y={new_person['y']:.2f}")
+                                else:
+                                    print(f"[Geo] Merged redundant detection at x={det['x']:.2f}, y={det['y']:.2f} into existing zone")
 
                             # Broadcast updated detections
                             if geo_detections:
