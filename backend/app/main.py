@@ -76,6 +76,10 @@ detected_people: list[dict] = []          # [{x, y, ts}, ...]
 active_flight_path: list[list[float]] = []  # [[x,y], [x,y], ...]
 current_waypoint_idx: int = 0
 autonomous_mode: bool = False
+returning_home: bool = False
+home_x: float = 0.0
+home_y: float = 0.0
+home_set: bool = False
 # ──────────────────────────────────────────────────────────────────────────────
 
 
@@ -239,10 +243,11 @@ async def plan_flight(body: dict) -> JSONResponse:
             
             y += strip_w
 
-        global active_flight_path, current_waypoint_idx, autonomous_mode
+        global active_flight_path, current_waypoint_idx, autonomous_mode, returning_home
         active_flight_path = [[w[0], w[1]] for w in waypoints]
         current_waypoint_idx = 0
         autonomous_mode = True
+        returning_home = False
 
         await broadcast_dashboard({
             "type": "flight_plan",
@@ -256,9 +261,10 @@ async def plan_flight(body: dict) -> JSONResponse:
 
 @app.post("/api/v1/drone/stop_autonomous")
 async def stop_autonomous() -> JSONResponse:
-    global autonomous_mode
+    global autonomous_mode, returning_home
     autonomous_mode = False
-    return JSONResponse({"status": "stopped"})
+    returning_home = True
+    return JSONResponse({"status": "returning_home"})
 
 
 if AIORTC_AVAILABLE:
@@ -366,64 +372,96 @@ async def drone_controller(ws: WebSocket) -> None:
                     }
                 )
 
-                # Autonomous waypoint command injection
+                # 1. Telemetry coordinates & home initialization
+                telem_data = state.telemetry
+                drone_x = telem_data.get("x", 0.0)
+                drone_y = telem_data.get("y", 0.0)
+                drone_z = telem_data.get("z", 0.0)
+                drone_yaw = telem_data.get("yaw", 0.0)
+
+                global home_x, home_y, home_set
+                if not home_set and telem_data.get("x") is not None:
+                    home_x = drone_x
+                    home_y = drone_y
+                    home_set = True
+
+                # 2. Autonomous Waypoint & Return Home State Machine
+                global autonomous_mode, returning_home, active_flight_path, current_waypoint_idx
+                
+                target_wp = None
+                target_alt = 6.0
+                should_land = False
+
                 if autonomous_mode and active_flight_path:
-                    telem_data = state.telemetry
-                    drone_x = telem_data.get("x", 0.0)
-                    drone_y = telem_data.get("y", 0.0)
-                    drone_z = telem_data.get("z", 0.0)
-                    TARGET_ALT = 6.0
-                    WAYPOINT_RADIUS = 1.5
-
                     if current_waypoint_idx < len(active_flight_path):
-                        wp = active_flight_path[current_waypoint_idx]
-                        dist = math.sqrt((wp[0]-drone_x)**2 + (wp[1]-drone_y)**2)
-                        if dist < WAYPOINT_RADIUS:
+                        target_wp = active_flight_path[current_waypoint_idx]
+                        dist = math.sqrt((target_wp[0]-drone_x)**2 + (target_wp[1]-drone_y)**2)
+                        if dist < 1.5:  # Waypoint radius
                             current_waypoint_idx += 1
-
-                        if current_waypoint_idx < len(active_flight_path):
-                            wp = active_flight_path[current_waypoint_idx]
-                            # Compute heading error and issue pitch/yaw commands
-                            bearing = math.atan2(wp[1]-drone_y, wp[0]-drone_x)
-                            drone_yaw = telem_data.get("yaw", 0.0)
-                            yaw_err = bearing - drone_yaw
-                            # Normalise to [-π, π]
-                            while yaw_err >  math.pi: yaw_err -= 2*math.pi
-                            while yaw_err < -math.pi: yaw_err += 2*math.pi
-
-                            # Only steer & pitch if we are at safe target altitude (within 1.0m)
-                            if drone_z >= TARGET_ALT - 1.0:
-                                yaw_cmd = float(max(-1.3, min(1.3, yaw_err * 1.0)))
-                                # Only pitch forward (negative value) if we are aligned with target heading
-                                if abs(yaw_err) < 0.25:  # within ~14 degrees of target course
-                                    pitch_cmd = -2.0 if dist > 2.0 else -0.5
-                                else:
-                                    pitch_cmd = 0.0
+                            if current_waypoint_idx < len(active_flight_path):
+                                target_wp = active_flight_path[current_waypoint_idx]
                             else:
-                                # Just climb vertically to reach target height safely first
-                                yaw_cmd = 0.0
-                                pitch_cmd = 0.0
-
-                            alt_delta = max(-0.5, min(0.5, TARGET_ALT - drone_z))
-
-                            auto_command = {
-                                "roll": 0.0,
-                                "pitch": pitch_cmd,
-                                "yaw": yaw_cmd,
-                                "altitude_delta": alt_delta,
-                                "target_altitude": TARGET_ALT,
-                            }
-                            async with controller_lock:
-                                if controller_ws is not None:
-                                    await controller_ws.send_text(json.dumps({
-                                        "type": "control",
-                                        "command": auto_command,
-                                        "timestamp": time.time(),
-                                    }))
-                    else:
-                        # Mission complete
+                                target_wp = None
+                    
+                    if target_wp is None:
+                        # Search mission completed -> transition to Return to Launch
                         autonomous_mode = False
+                        returning_home = True
                         await broadcast_dashboard({"type": "mission_complete", "timestamp": time.time()})
+
+                if returning_home:
+                    target_wp = [home_x, home_y]
+                    dist_home = math.sqrt((home_x - drone_x)**2 + (home_y - drone_y)**2)
+                    
+                    # If we are horizontally close to home spawn point, descend vertically
+                    if dist_home < 1.2:
+                        should_land = True
+                        target_alt = 0.0
+                        
+                        # Once safely on the ground, terminate navigation loop
+                        if drone_z < 0.25:
+                            returning_home = False
+                            target_wp = None
+
+                # Execute autopilot navigation if active
+                if (autonomous_mode or returning_home) and (target_wp is not None or should_land):
+                    if target_wp is not None:
+                        bearing = math.atan2(target_wp[1]-drone_y, target_wp[0]-drone_x)
+                        yaw_err = bearing - drone_yaw
+                        while yaw_err >  math.pi: yaw_err -= 2*math.pi
+                        while yaw_err < -math.pi: yaw_err += 2*math.pi
+                        dist = math.sqrt((target_wp[0]-drone_x)**2 + (target_wp[1]-drone_y)**2)
+                    else:
+                        yaw_err = 0.0
+                        dist = 0.0
+
+                    # Only steer & pitch if we are at safe target altitude, OR if landing
+                    if drone_z >= 5.0 or should_land:
+                        yaw_cmd = float(max(-1.3, min(1.3, yaw_err * 1.0))) if not should_land else 0.0
+                        if not should_land and abs(yaw_err) < 0.25:
+                            pitch_cmd = -2.0 if dist > 2.0 else -0.5
+                        else:
+                            pitch_cmd = 0.0
+                    else:
+                        yaw_cmd = 0.0
+                        pitch_cmd = 0.0
+
+                    alt_delta = max(-0.5, min(0.5, target_alt - drone_z))
+
+                    auto_command = {
+                        "roll": 0.0,
+                        "pitch": pitch_cmd,
+                        "yaw": yaw_cmd,
+                        "altitude_delta": alt_delta,
+                        "target_altitude": target_alt,
+                    }
+                    async with controller_lock:
+                        if controller_ws is not None:
+                            await controller_ws.send_text(json.dumps({
+                                "type": "control",
+                                "command": auto_command,
+                                "timestamp": time.time(),
+                            }))
             elif payload_type == "camera":
                 frame_b64 = payload.get("frame")
                 if not frame_b64:
@@ -487,26 +525,57 @@ async def drone_controller(ws: WebSocket) -> None:
                                     u = (x1 + x2) / 2.0
                                     v = (y1 + y2) / 2.0
 
-                                    # Camera-space ray
+                                    # Convert camera-space ray to drone-space
+                                    # Camera: +X is right, +Y is down, +Z is forward
+                                    # Drone: +X is right, +Y is forward, +Z is up
+                                    # So: x_d = x_c, y_d = z_c, z_d = -y_c
                                     ray_c = np.array([(u - w_img/2) / fx, (v - h_img/2) / fy, 1.0])
                                     ray_c /= np.linalg.norm(ray_c)
-
-                                    # Gimbal pitch rotation (camera tilted downward)
-                                    gp = GIMBAL_PITCH
-                                    R_gimbal = np.array([
-                                        [1, 0,           0          ],
-                                        [0, np.cos(gp), -np.sin(gp)],
-                                        [0, np.sin(gp),  np.cos(gp)],
+                                    
+                                    ray_drone_unpitched = np.array([
+                                        ray_c[0],   # x_d = x_c
+                                        ray_c[2],   # y_d = z_c
+                                        -ray_c[1]   # z_d = -y_c
                                     ])
 
-                                    # Drone attitude
-                                    r, p, y_ang = drone_rpy
-                                    R_z = np.array([[np.cos(y_ang),-np.sin(y_ang),0],[np.sin(y_ang),np.cos(y_ang),0],[0,0,1]])
-                                    R_y = np.array([[np.cos(p),0,np.sin(p)],[0,1,0],[-np.sin(p),0,np.cos(p)]])
-                                    R_x = np.array([[1,0,0],[0,np.cos(r),-np.sin(r)],[0,np.sin(r),np.cos(r)]])
-                                    R_drone = R_z @ R_y @ R_x
+                                    # Apply gimbal pitch rotation around local drone X-axis (tilting down is rotation by -gp)
+                                    gp = GIMBAL_PITCH
+                                    R_gimbal = np.array([
+                                        [1, 0, 0],
+                                        [0, np.cos(gp), np.sin(gp)],
+                                        [0, -np.sin(gp), np.cos(gp)]
+                                    ])
+                                    ray_drone = R_gimbal @ ray_drone_unpitched
 
-                                    ray_world = R_drone @ R_gimbal @ ray_c
+                                    # Apply drone roll/pitch/yaw orientation:
+                                    # In Webots ENU:
+                                    # - Roll (r) is around Y-axis (longitudinal)
+                                    # - Pitch (p) is around X-axis (lateral)
+                                    # - Yaw (y_ang) is around Z-axis (vertical)
+                                    r, p, y_ang = drone_rpy
+                                    
+                                    # Yaw matrix (around Z)
+                                    R_z = np.array([
+                                        [np.cos(y_ang), -np.sin(y_ang), 0],
+                                        [np.sin(y_ang),  np.cos(y_ang), 0],
+                                        [0,              0,             1]
+                                    ])
+                                    # Pitch matrix (around X)
+                                    R_x = np.array([
+                                        [1, 0, 0],
+                                        [0, np.cos(p), -np.sin(p)],
+                                        [0, np.sin(p),  np.cos(p)]
+                                    ])
+                                    # Roll matrix (around Y)
+                                    R_y = np.array([
+                                        [np.cos(r), 0, np.sin(r)],
+                                        [0,         1, 0        ],
+                                        [-np.sin(r), 0, np.cos(r)]
+                                    ])
+                                    
+                                    R_drone = R_z @ R_x @ R_y
+                                    ray_world = R_drone @ ray_drone
+
                                     if ray_world[2] >= 0:
                                         continue   # ray points skyward
 

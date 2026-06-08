@@ -90,7 +90,7 @@ class Mavic(Robot):
             motor.setPosition(float("inf"))
             motor.setVelocity(1.0)
 
-        self.target_altitude = 1.0
+        self.target_altitude = 0.0
         self._last_telemetry_time = 0.0
         self._last_camera_time = 0.0
         self._last_pointcloud_time = 0.0
@@ -252,10 +252,16 @@ class Mavic(Robot):
                 self.K_VERTICAL_THRUST + vertical_input + roll_input - pitch_input - yaw_input
             )
 
-            self.front_left_motor.setVelocity(front_left_motor_input)
-            self.front_right_motor.setVelocity(-front_right_motor_input)
-            self.rear_left_motor.setVelocity(-rear_left_motor_input)
-            self.rear_right_motor.setVelocity(rear_right_motor_input)
+            if self.target_altitude <= 0.15:
+                self.front_left_motor.setVelocity(0.0)
+                self.front_right_motor.setVelocity(0.0)
+                self.rear_left_motor.setVelocity(0.0)
+                self.rear_right_motor.setVelocity(0.0)
+            else:
+                self.front_left_motor.setVelocity(front_left_motor_input)
+                self.front_right_motor.setVelocity(-front_right_motor_input)
+                self.rear_left_motor.setVelocity(-rear_left_motor_input)
+                self.rear_right_motor.setVelocity(rear_right_motor_input)
 
             if WEBSOCKETS_AVAILABLE and sim_time - self._last_telemetry_time >= self.TELEMETRY_PERIOD:
                 x_pos, y_pos, z_pos = self.gps.getValues()
