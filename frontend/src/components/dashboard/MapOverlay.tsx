@@ -6,15 +6,42 @@ import { headingFont } from '@/lib/fonts';
 import { Radar, Target, Play, Ban, ShieldAlert, CircleDot } from 'lucide-react';
 
 const MAP_SIZE_PX = 500; // Display dimensions of the canvas
-const MAP_METERS = 40.0; // Must match backend SLAM_MAP_METERS
 
-// Helper to convert Webots world coordinates (meters) to canvas pixel coordinates
-function worldToCanvas(x: number, y: number) {
-	const scale = MAP_SIZE_PX / MAP_METERS;
-	return [
-		MAP_SIZE_PX / 2 + x * scale,
-		MAP_SIZE_PX / 2 - y * scale // Flip Y axis because canvas draws downwards
-	];
+// Helper to convert Webots world coordinates (metres) to canvas pixel coordinates.
+// Uses live map dimensions from the Supervisor so the map auto-sizes.
+function worldToCanvas(
+	worldX: number,
+	worldZ: number,
+	mapDims: MapDims,
+	size: number,
+): [number, number] {
+	// Webots world: X is right, Z is forward, origin at centre.
+	// Canvas: X is right, Y is down, origin at top-left.
+	const scaleX = size / mapDims.width;
+	const scaleZ = size / mapDims.length;
+	const cx = (worldX - mapDims.origin_x) * scaleX;
+	const cy = size - (worldZ - mapDims.origin_z) * scaleZ; // flip Z
+	return [cx, cy];
+}
+
+interface MapDims {
+	width: number;
+	length: number;
+	origin_x: number;
+	origin_z: number;
+}
+
+interface ConfirmedDetection {
+	id: string;
+	x: number;
+	y: number;
+}
+
+interface AllPedestrian {
+	id: string;
+	x: number;
+	y: number;
+	detected: boolean;
 }
 
 interface Victim {
@@ -37,12 +64,21 @@ export default function MapOverlay({ wsUrl }: MapOverlayProps) {
 	const slamImgRef = useRef<HTMLImageElement | null>(null);
 	const [people, setPeople] = useState<Victim[]>([]);
 	const [waypoints, setWaypoints] = useState<Waypoint[]>([]);
-	const [dronePos, setDronePos] = useState<{ x: number; y: number } | null>(
-		null
-	);
+	const [dronePos, setDronePos] = useState<{ x: number; y: number } | null>(null);
 	const [drawingPoly, setDrawingPoly] = useState(false);
 	const [polyPoints, setPolyPoints] = useState<[number, number][]>([]);
 	const [missionActive, setMissionActive] = useState(false);
+
+	// Supervisor state
+	const [mapDims, setMapDims] = useState<MapDims>({
+		width: 50,
+		length: 50,
+		origin_x: -25,
+		origin_z: -25,
+	});
+	const [confirmedDetections, setConfirmedDetections] = useState<ConfirmedDetection[]>([]);
+	const [allPedestrians, setAllPedestrians] = useState<AllPedestrian[]>([]);
+	const [supervisorActive, setSupervisorActive] = useState(false);
 
 	// WebSocket handler for map messages
 	useEffect(() => {
@@ -76,6 +112,13 @@ export default function MapOverlay({ wsUrl }: MapOverlayProps) {
 				} else if (msg.type === 'mission_complete') {
 					setMissionActive(false);
 					setWaypoints([]);
+				} else if (msg.type === 'supervisor_state') {
+					// Dynamic map sizing + confirmed detections from Supervisor
+					if (msg.map) setMapDims(msg.map);
+					if (msg.confirmed_detections) setConfirmedDetections(msg.confirmed_detections);
+					if (msg.all_pedestrians) setAllPedestrians(msg.all_pedestrians);
+					if (msg.drone) setDronePos(msg.drone);
+					if (!supervisorActive) setSupervisorActive(true);
 				}
 			} catch (_err) {
 				// ignore malformed payloads
@@ -85,7 +128,7 @@ export default function MapOverlay({ wsUrl }: MapOverlayProps) {
 		return () => {
 			ws.close();
 		};
-	}, [wsUrl]);
+	}, [wsUrl, supervisorActive]);
 
 	// Render loop
 	useEffect(() => {
@@ -107,18 +150,21 @@ export default function MapOverlay({ wsUrl }: MapOverlayProps) {
 				ctx.fillRect(0, 0, MAP_SIZE_PX, MAP_SIZE_PX);
 			}
 
-			// 2. Draw 5-meter Reference Grid Lines
+			// 2. Draw Reference Grid Lines (5-metre spacing)
 			ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
 			ctx.lineWidth = 1;
-			for (let m = -20; m <= 20; m += 5) {
-				const [cx] = worldToCanvas(m, 0);
-				const [, cy] = worldToCanvas(0, m);
-
+			const gridStep = 5; // metres between lines
+			const startX = Math.ceil(mapDims.origin_x / gridStep) * gridStep;
+			const startZ = Math.ceil(mapDims.origin_z / gridStep) * gridStep;
+			for (let wx = startX; wx <= -mapDims.origin_x; wx += gridStep) {
+				const [cx] = worldToCanvas(wx, 0, mapDims, MAP_SIZE_PX);
 				ctx.beginPath();
 				ctx.moveTo(cx, 0);
 				ctx.lineTo(cx, MAP_SIZE_PX);
 				ctx.stroke();
-
+			}
+			for (let wz = startZ; wz <= -mapDims.origin_z; wz += gridStep) {
+				const [, cy] = worldToCanvas(0, wz, mapDims, MAP_SIZE_PX);
 				ctx.beginPath();
 				ctx.moveTo(0, cy);
 				ctx.lineTo(MAP_SIZE_PX, cy);
@@ -132,7 +178,7 @@ export default function MapOverlay({ wsUrl }: MapOverlayProps) {
 				ctx.setLineDash([6, 4]);
 				ctx.beginPath();
 				waypoints.forEach((wp, idx) => {
-					const [cx, cy] = worldToCanvas(wp.x, wp.y);
+					const [cx, cy] = worldToCanvas(wp.x, wp.y, mapDims, MAP_SIZE_PX);
 					if (idx === 0) ctx.moveTo(cx, cy);
 					else ctx.lineTo(cx, cy);
 				});
@@ -141,7 +187,7 @@ export default function MapOverlay({ wsUrl }: MapOverlayProps) {
 
 				// Waypoint dots
 				waypoints.forEach((wp, idx) => {
-					const [cx, cy] = worldToCanvas(wp.x, wp.y);
+					const [cx, cy] = worldToCanvas(wp.x, wp.y, mapDims, MAP_SIZE_PX);
 					ctx.beginPath();
 					ctx.arc(cx, cy, 4, 0, Math.PI * 2);
 					ctx.fillStyle = '#10b981';
@@ -165,7 +211,7 @@ export default function MapOverlay({ wsUrl }: MapOverlayProps) {
 				ctx.setLineDash([4, 4]);
 				ctx.beginPath();
 				polyPoints.forEach(([px, py], idx) => {
-					const [cx, cy] = worldToCanvas(px, py);
+					const [cx, cy] = worldToCanvas(px, py, mapDims, MAP_SIZE_PX);
 					if (idx === 0) ctx.moveTo(cx, cy);
 					else ctx.lineTo(cx, cy);
 				});
@@ -173,7 +219,7 @@ export default function MapOverlay({ wsUrl }: MapOverlayProps) {
 				ctx.setLineDash([]);
 
 				polyPoints.forEach(([px, py]) => {
-					const [cx, cy] = worldToCanvas(px, py);
+					const [cx, cy] = worldToCanvas(px, py, mapDims, MAP_SIZE_PX);
 					ctx.beginPath();
 					ctx.arc(cx, cy, 5, 0, Math.PI * 2);
 					ctx.fillStyle = '#eab308';
@@ -184,12 +230,64 @@ export default function MapOverlay({ wsUrl }: MapOverlayProps) {
 				});
 			}
 
-			// 5. Draw Detected Stranded Individuals
+			// 5a. Demo overlay: draw all pedestrians as faint grey dots (undetected)
+			allPedestrians.forEach(({ x, y, detected }) => {
+				if (detected) return; // confirmed ones are drawn below with full style
+				const [cx, cy] = worldToCanvas(x, y, mapDims, MAP_SIZE_PX);
+				ctx.beginPath();
+				ctx.arc(cx, cy, 4, 0, Math.PI * 2);
+				ctx.fillStyle = 'rgba(200, 200, 200, 0.25)';
+				ctx.fill();
+				ctx.strokeStyle = 'rgba(200, 200, 200, 0.4)';
+				ctx.lineWidth = 1;
+				ctx.stroke();
+			});
+
+			// 5b. Supervisor-confirmed detections (YOLO + ground-truth validated)
+			confirmedDetections.forEach(({ id, x, y }) => {
+				const [cx, cy] = worldToCanvas(x, y, mapDims, MAP_SIZE_PX);
+
+				// Outer detection zone circle
+				const zoneRadius = 4.0 * (MAP_SIZE_PX / mapDims.width);
+				ctx.beginPath();
+				ctx.arc(cx, cy, zoneRadius, 0, Math.PI * 2);
+				ctx.fillStyle = 'rgba(239, 68, 68, 0.07)';
+				ctx.fill();
+				ctx.strokeStyle = 'rgba(239, 68, 68, 0.25)';
+				ctx.lineWidth = 1.2;
+				ctx.setLineDash([5, 5]);
+				ctx.stroke();
+				ctx.setLineDash([]);
+
+				// Pulsing glow ring
+				const pulseRadius = 11 + Math.sin(Date.now() / 150) * 4;
+				ctx.beginPath();
+				ctx.arc(cx, cy, pulseRadius, 0, Math.PI * 2);
+				ctx.fillStyle = 'rgba(255, 50, 50, 0.2)';
+				ctx.fill();
+
+				// Solid core dot
+				ctx.beginPath();
+				ctx.arc(cx, cy, 6, 0, Math.PI * 2);
+				ctx.fillStyle = '#ff3232';
+				ctx.fill();
+				ctx.strokeStyle = '#ffffff';
+				ctx.lineWidth = 1.5;
+				ctx.stroke();
+
+				// ID label (PED_0 → #0)
+				ctx.fillStyle = '#fff';
+				ctx.font = 'bold 10px monospace';
+				ctx.textAlign = 'center';
+				ctx.fillText(id.replace('PED_', '#'), cx, cy - 14);
+			});
+
+			// 5c. Geo-projected detections (existing YOLO ray-cast estimates)
 			people.forEach((person) => {
-				const [cx, cy] = worldToCanvas(person.x, person.y);
+				const [cx, cy] = worldToCanvas(person.x, person.y, mapDims, MAP_SIZE_PX);
 
 				// 4.0-meter Safety/Detection Zone Circle (Euclidean)
-				const zoneRadius = 4.0 * (MAP_SIZE_PX / MAP_METERS);
+				const zoneRadius = 4.0 * (MAP_SIZE_PX / mapDims.width);
 				ctx.beginPath();
 				ctx.arc(cx, cy, zoneRadius, 0, Math.PI * 2);
 				ctx.fillStyle = 'rgba(239, 68, 68, 0.08)'; // Shaded zone
@@ -228,7 +326,7 @@ export default function MapOverlay({ wsUrl }: MapOverlayProps) {
 
 			// 6. Draw Drone Location Marker
 			if (dronePos) {
-				const [cx, cy] = worldToCanvas(dronePos.x, dronePos.y);
+				const [cx, cy] = worldToCanvas(dronePos.x, dronePos.y, mapDims, MAP_SIZE_PX);
 
 				// Outer scanner ring
 				ctx.beginPath();
@@ -252,9 +350,9 @@ export default function MapOverlay({ wsUrl }: MapOverlayProps) {
 
 		rafId = requestAnimationFrame(draw);
 		return () => cancelAnimationFrame(rafId);
-	}, [waypoints, polyPoints, people, dronePos]);
+	}, [waypoints, polyPoints, people, dronePos, mapDims, allPedestrians, confirmedDetections]);
 
-	// Handle drawing clicks
+	// Handle drawing clicks — convert pixel back to world metres using live map dims
 	const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
 		if (!drawingPoly) return;
 		const canvas = canvasRef.current;
@@ -263,10 +361,12 @@ export default function MapOverlay({ wsUrl }: MapOverlayProps) {
 		const cx = e.clientX - rect.left;
 		const cy = e.clientY - rect.top;
 
-		// Convert pixel back to world metres
-		const scale = MAP_METERS / MAP_SIZE_PX;
-		const wx = (cx - MAP_SIZE_PX / 2) * scale;
-		const wy = -(cy - MAP_SIZE_PX / 2) * scale;
+		// Invert worldToCanvas: wx = cx / scaleX + origin_x
+		//                        wz = (size - cy) / scaleZ + origin_z
+		const scaleX = MAP_SIZE_PX / mapDims.width;
+		const scaleZ = MAP_SIZE_PX / mapDims.length;
+		const wx = cx / scaleX + mapDims.origin_x;
+		const wy = (MAP_SIZE_PX - cy) / scaleZ + mapDims.origin_z;
 
 		setPolyPoints((prev) => [...prev, [wx, wy]]);
 	};
@@ -358,10 +458,13 @@ export default function MapOverlay({ wsUrl }: MapOverlayProps) {
 						onClick={handleCanvasClick}
 					/>
 
-					{/* Simple HUD stats */}
+					{/* Live HUD stats */}
 					<div className="absolute bottom-3 left-3 rounded-lg bg-slate-950/70 p-2 font-mono text-[10px] text-emerald-400 backdrop-blur-xs border border-emerald-500/20">
-						<div>COV: 40m x 40m</div>
-						<div>RES: 0.05m/px</div>
+						<div>COV: {mapDims.width.toFixed(0)}m x {mapDims.length.toFixed(0)}m</div>
+						<div>RES: {(mapDims.width / MAP_SIZE_PX).toFixed(3)}m/px</div>
+						{supervisorActive && (
+							<div className="text-emerald-300">SUP: ✅ ACTIVE</div>
+						)}
 					</div>
 				</div>
 
@@ -377,7 +480,15 @@ export default function MapOverlay({ wsUrl }: MapOverlayProps) {
 					</span>
 					<span className="flex items-center gap-1.5">
 						<ShieldAlert className="h-4 w-4 text-red-500" />
-						Detected Victim
+						Geo Estimate
+					</span>
+					<span className="flex items-center gap-1.5">
+						<span className="h-3 w-3 rounded-full bg-red-500 border-2 border-white shadow" />
+						Supervisor Confirmed
+					</span>
+					<span className="flex items-center gap-1.5">
+						<span className="h-3 w-3 rounded-full bg-white/20 border border-white/40" />
+						Undetected (demo)
 					</span>
 					<span className="flex items-center gap-1.5">
 						<span className="h-3 w-3 rounded-full bg-red-50 border border-red-300 border-dashed" />
@@ -458,12 +569,33 @@ export default function MapOverlay({ wsUrl }: MapOverlayProps) {
 							</h3>
 						</div>
 						<span className="rounded-full bg-red-50 border border-red-100 px-2.5 py-0.5 text-xs font-bold text-red-600 animate-pulse">
-							{people.length} Found
+							{confirmedDetections.length > 0 ? confirmedDetections.length : people.length} Found
 						</span>
 					</div>
 
 					<div className="flex-1 overflow-y-auto max-h-[220px] pr-1 flex flex-col gap-2">
-						{people.length === 0 ? (
+						{/* Supervisor-confirmed detections (preferred — exact positions) */}
+						{confirmedDetections.length > 0 ? (
+							confirmedDetections.map((det) => (
+								<div
+									key={det.id}
+									className="flex items-center justify-between rounded-xl border border-red-100 bg-red-50/40 p-3 text-xs"
+								>
+									<div className="flex items-center gap-2.5">
+										<span className="flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-[9px] font-bold text-white">
+											{det.id.replace('PED_', '')}
+										</span>
+										<div className="flex flex-col">
+											<span className="font-mono text-gray-700">X: {det.x.toFixed(2)}m</span>
+											<span className="font-mono text-gray-500">Y: {det.y.toFixed(2)}m</span>
+										</div>
+									</div>
+									<span className="rounded-full bg-red-100 px-2 py-0.5 text-[9px] font-semibold text-red-600">
+										SUPERVISOR
+									</span>
+								</div>
+							))
+						) : people.length === 0 ? (
 							<div className="flex h-full flex-col items-center justify-center text-center p-4">
 								<span className="text-3xl mb-2">🔭</span>
 								<p className="text-xs text-gray-400">
@@ -471,6 +603,7 @@ export default function MapOverlay({ wsUrl }: MapOverlayProps) {
 								</p>
 							</div>
 						) : (
+							// Fallback: geo-projection estimates when Supervisor isn't available
 							people.map((person) => (
 								<div
 									key={`${person.x}-${person.y}-${person.ts}`}
@@ -481,12 +614,8 @@ export default function MapOverlay({ wsUrl }: MapOverlayProps) {
 											👤
 										</span>
 										<div className="flex flex-col">
-											<span className="font-mono text-gray-700">
-												X: {person.x.toFixed(2)}m
-											</span>
-											<span className="font-mono text-gray-750">
-												Y: {person.y.toFixed(2)}m
-											</span>
+											<span className="font-mono text-gray-700">X: {person.x.toFixed(2)}m</span>
+											<span className="font-mono text-gray-500">Y: {person.y.toFixed(2)}m</span>
 										</div>
 									</div>
 									<span className="text-[10px] text-gray-400">

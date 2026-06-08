@@ -112,6 +112,7 @@ class DroneState:
         self.camera_ts: float = 0.0
         self.pointcloud_points: list = []
         self.pointcloud_ts: float = 0.0
+        self.supervisor_state: dict = {}
         self.lock = asyncio.Lock()
         self.camera_lock = asyncio.Lock()
         self.pointcloud_lock = asyncio.Lock()
@@ -670,6 +671,24 @@ async def drone_controller(ws: WebSocket) -> None:
                                     "people": detected_people,
                                     "timestamp": time.time(),
                                 })
+
+                            # Notify the Webots controller that YOLO fired this frame
+                            # so the Supervisor can cross-validate against ground truth
+                            person_detected_this_frame = any(
+                                int(box.cls.item()) == 0
+                                for result in results
+                                for box in result.boxes
+                            )
+                            if person_detected_this_frame:
+                                async with controller_lock:
+                                    if controller_ws is not None:
+                                        try:
+                                            await controller_ws.send_text(json.dumps({
+                                                "type": "yolo_hit",
+                                                "timestamp": time.time(),
+                                            }))
+                                        except Exception:
+                                            pass
                     except Exception as img_err:
                         # Fallback to saving raw frames if image manipulation fails
                         print(f"YOLO Processing failed, bypassing: {img_err}")
@@ -691,6 +710,21 @@ async def drone_controller(ws: WebSocket) -> None:
                         "timestamp": ts,
                     }
                 )
+            elif payload_type == "supervisor_state":
+                # Store latest supervisor state and broadcast to all dashboard clients
+                async with state.lock:
+                    state.supervisor_state = payload
+
+                await broadcast_dashboard({
+                    "type":                  "supervisor_state",
+                    "map":                   payload.get("map"),
+                    "drone":                 payload.get("drone"),
+                    "confirmed_detections":  payload.get("confirmed_detections", []),
+                    "new_detections":        payload.get("new_detections", []),
+                    "all_pedestrians":       payload.get("all_pedestrians", []),
+                    "timestamp":             payload.get("timestamp"),
+                })
+
             elif payload_type == "slam_scan":
                 scan_data = payload.get("scan", [])
                 drone_rpy = payload.get("drone_rpy", [0.0, 0.0, 0.0])
@@ -726,6 +760,13 @@ async def drone_controller(ws: WebSocket) -> None:
         async with controller_lock:
             if controller_ws is ws:
                 controller_ws = None
+
+
+@app.get("/api/v1/drone/world")
+async def get_world_state() -> JSONResponse:
+    """Returns live map dimensions and all Supervisor-confirmed detections."""
+    async with state.lock:
+        return JSONResponse(state.supervisor_state)
 
 
 def _load_ice_servers():

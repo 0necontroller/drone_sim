@@ -111,6 +111,51 @@ class Mavic(Supervisor):
         self._waypoints_lock = threading.Lock()
         self._last_drawn_count = 0
 
+        # ── Supervisor: YOLO-hit flag ─────────────────────────────────────────
+        self._yolo_fired_this_frame = False
+        self._yolo_lock = threading.Lock()
+
+        # ── Supervisor: World & Pedestrian Setup ──────────────────────────────
+        self.map_width  = 50.0   # fallback default in metres
+        self.map_length = 50.0
+
+        floor_node = self.getFromDef("FLOOR")
+        if floor_node:
+            size_field = floor_node.getField("size")
+            if size_field:
+                vec = size_field.getSFVec2f()
+                self.map_width  = float(vec[0])
+                self.map_length = float(vec[1])
+                print(f"[Supervisor] Map: {self.map_width}m × {self.map_length}m")
+            else:
+                # RectangleArena uses 'floorSize' instead of 'size'
+                size_field = floor_node.getField("floorSize")
+                if size_field:
+                    vec = size_field.getSFVec2f()
+                    self.map_width  = float(vec[0])
+                    self.map_length = float(vec[1])
+                    print(f"[Supervisor] Map (floorSize): {self.map_width}m × {self.map_length}m")
+        else:
+            print("[Supervisor] WARNING: FLOOR node not found — using default 50×50m")
+
+        # Discover all pedestrian nodes: PED_0, PED_1, … PED_N
+        self._ped_nodes: dict = {}
+        for i in range(50):
+            def_name = f"PED_{i}"
+            node = self.getFromDef(def_name)
+            if node:
+                self._ped_nodes[def_name] = node
+            else:
+                break   # stop at first gap
+        print(f"[Supervisor] Found {len(self._ped_nodes)} pedestrian nodes: {list(self._ped_nodes.keys())}")
+
+        # Detection state
+        self._confirmed_detections: dict = {}   # {ped_id: [x, y, z]}
+        self._detection_threshold = 8.0         # metres — drone must be within this to validate
+        self._last_supervisor_time = 0.0
+        self.SUPERVISOR_PERIOD = 0.2            # check every 200 ms
+        # ─────────────────────────────────────────────────────────────────────
+
         if WEBSOCKETS_AVAILABLE:
             self._start_ws_thread()
         else:
@@ -170,6 +215,9 @@ class Mavic(Supervisor):
                 wps = payload.get("waypoints", [])
                 with self._waypoints_lock:
                     self._pending_waypoints = wps
+            elif payload_type == "yolo_hit":
+                with self._yolo_lock:
+                    self._yolo_fired_this_frame = True
 
     def _queue_send(self, payload):
         try:
@@ -364,6 +412,126 @@ class Mavic(Supervisor):
                 except Exception as exc:
                     print(f"SLAM scan failed: {exc}")
                     self._last_slam_time = sim_time
+
+            # ── Supervisor: Validate detections & broadcast state ─────────────
+            if sim_time - self._last_supervisor_time >= self.SUPERVISOR_PERIOD:
+                drone_xyz = list(self.gps.getValues())
+
+                # Read and reset the YOLO-hit flag
+                with self._yolo_lock:
+                    yolo_fired = self._yolo_fired_this_frame
+                    self._yolo_fired_this_frame = False
+
+                # Validate YOLO hit against ground-truth pedestrian positions
+                new_detections = self._validate_yolo_detection(drone_xyz, yolo_fired)
+
+                # Always broadcast full supervisor state
+                if WEBSOCKETS_AVAILABLE:
+                    payload = self._build_supervisor_payload(sim_time)
+                    if new_detections:
+                        payload["new_detections"] = new_detections
+                    self._queue_send(payload)
+
+                self._last_supervisor_time = sim_time
+            # ─────────────────────────────────────────────────────────────────
+
+    # ── Supervisor methods ────────────────────────────────────────────────────
+
+    def _get_pedestrian_positions(self) -> dict:
+        """
+        Returns current world-space [X, Y, Z] for every pedestrian node.
+        Webots: X is right, Z is forward/depth, Y is height (up).
+        """
+        positions = {}
+        for ped_id, node in self._ped_nodes.items():
+            pos = node.getPosition()   # [x, y, z] in world frame
+            positions[ped_id] = [
+                round(float(pos[0]), 3),
+                round(float(pos[1]), 3),
+                round(float(pos[2]), 3),
+            ]
+        return positions
+
+    def _validate_yolo_detection(self, drone_xyz: list, yolo_fired: bool) -> list:
+        """
+        When YOLO fires (detected a person in this frame), find which real
+        pedestrian is closest to the drone and within the detection threshold.
+        New detections are recorded in _confirmed_detections (deduplicated by DEF name).
+
+        Returns list of newly confirmed detections: [{id, x, y, world_pos}, ...]
+        """
+        if not yolo_fired:
+            return []
+
+        ped_positions = self._get_pedestrian_positions()
+        new_detections = []
+
+        for ped_id, ped_pos in ped_positions.items():
+            if ped_id in self._confirmed_detections:
+                continue   # already confirmed — skip
+
+            dist = (
+                (drone_xyz[0] - ped_pos[0]) ** 2
+                + (drone_xyz[1] - ped_pos[1]) ** 2
+                + (drone_xyz[2] - ped_pos[2]) ** 2
+            ) ** 0.5
+
+            if dist <= self._detection_threshold:
+                self._confirmed_detections[ped_id] = ped_pos
+                new_detections.append({
+                    "id": ped_id,
+                    "x": ped_pos[0],
+                    "y": ped_pos[2],   # Webots Z → map Y (ground plane)
+                    "world_pos": ped_pos,
+                })
+                print(
+                    f"[Supervisor] ✅ Confirmed new person: {ped_id} "
+                    f"at {ped_pos} (dist={dist:.2f}m)"
+                )
+
+        return new_detections
+
+    def _build_supervisor_payload(self, sim_time: float) -> dict:
+        """
+        Packages the full supervisor state for the frontend:
+        - Map dimensions (from FLOOR node)
+        - All confirmed (deduplicated) detections
+        - All current pedestrian positions (demo overlay)
+        - Drone world position
+        """
+        drone_pos = self.gps.getValues()   # [x, y, z]
+        all_ped_positions = self._get_pedestrian_positions()
+
+        return {
+            "type": "supervisor_state",
+            "timestamp": sim_time,
+            "map": {
+                "width":    self.map_width,
+                "length":   self.map_length,
+                "origin_x": -(self.map_width  / 2.0),
+                "origin_z": -(self.map_length / 2.0),
+            },
+            "drone": {
+                "x": round(float(drone_pos[0]), 3),
+                "y": round(float(drone_pos[2]), 3),   # Webots Z → map Y
+            },
+            "confirmed_detections": [
+                {"id": pid, "x": pos[0], "y": pos[2]}
+                for pid, pos in self._confirmed_detections.items()
+            ],
+            # Demo overlay — shows all pedestrians; remove in production
+            "all_pedestrians": [
+                {
+                    "id": pid,
+                    "x": pos[0],
+                    "y": pos[2],
+                    "detected": pid in self._confirmed_detections,
+                }
+                for pid, pos in all_ped_positions.items()
+            ],
+        }
+
+    # ─────────────────────────────────────────────────────────────────────────
 
     def _get_lidar_points(self):
         """Extract (x, y, z) points from LiDAR point cloud, filtering invalid values."""

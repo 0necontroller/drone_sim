@@ -120,42 +120,43 @@ Fluid {
 }
 Pedestrian {
   translation 7.09 22.66 1.37
-  name "pedestrian(5)"
+  name "PED_4"
 }
 Pedestrian {
   translation 53.75 2.36 2.26
-  name "pedestrian(8)"
+  name "PED_8"
   shirtColor 0.909865 0.909483 0.236072
 }
 Pedestrian {
   translation 50.63 -5.83 2.64
-  name "pedestrian(9)"
+  name "PED_9"
   shirtColor 0.907195 0.126513 0.0757153
 }
 Pedestrian {
   translation -30.31 28.32 1.37
-  name "pedestrian(4)"
+  name "PED_3"
 }
 Pedestrian {
   translation -31.29 29.93 1.37
-  name "pedestrian(2)"
+  name "PED_1"
   shirtColor 0.807797 0.275807 0.0820478
 }
 Pedestrian {
   translation 4.52 -20.08 1.47
-  name "pedestrian(6)"
+  name "PED_5"
   shirtColor 0.807797 0.275807 0.0820478
 }
 Pedestrian {
   translation -11.03 -4.3 1.27
+  name "PED_0"
 }
 Pedestrian {
   translation -36.68 1.95 1.37
-  name "pedestrian(7)"
+  name "PED_7"
 }
 Pedestrian {
   translation -46.87 -22.18 1.37
-  name "pedestrian(3)"
+  name "PED_2"
 }
 Road {
   translation -43.8 9.2 0.01
@@ -176,7 +177,7 @@ Road {
 }
 Pedestrian {
   translation -19.47 10.17 1.27
-  name "pedestrian(1)"
+  name "PED_6"
   shirtColor 0.807797 0.275807 0.0820478
 }
 Windmill {
@@ -285,13 +286,13 @@ Forest {
   minRadius 3
 }
 Mavic2Pro {
-  translation 0 0 0.1
+  translation -5.30718e-08 -0.02 0.1
   rotation 0 0 1 3.14159
-  supervisor TRUE
   controller "mavicpy"
   controllerArgs [
     ""
   ]
+  supervisor TRUE
   battery [
     0
   ]

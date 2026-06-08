@@ -9,7 +9,11 @@ const toWsUrl = (base?: string, path = RTC_PATH) => {
 	return base.replace(/^http/, 'ws') + path;
 };
 
-export default function CameraFeed() {
+interface CameraFeedProps {
+	className?: string;
+}
+
+export default function CameraFeed({ className = '' }: CameraFeedProps) {
 	const videoRef = useRef<HTMLVideoElement | null>(null);
 
 	useEffect(() => {
@@ -43,7 +47,7 @@ export default function CameraFeed() {
 					await pc.setRemoteDescription(
 						new RTCSessionDescription({
 							sdp: payload.sdp,
-							type: payload.sdpType ?? 'answer'
+							type: payload.sdpType ?? 'answer',
 						})
 					);
 				}
@@ -62,7 +66,7 @@ export default function CameraFeed() {
 				JSON.stringify({
 					type: 'offer',
 					sdp: offer.sdp,
-					sdpType: offer.type
+					sdpType: offer.type,
 				})
 			);
 		};
@@ -73,26 +77,27 @@ export default function CameraFeed() {
 		};
 	}, []);
 
-	return (
-		<div className="rounded-3xl border border-gray-100 bg-white p-6 shadow-sm h-full flex flex-col">
-			<p className="text-xs tracking-[0.2em] text-gray-400 uppercase font-semibold mb-4">
-				Camera
-			</p>
-			<div className="flex-1 w-full overflow-hidden rounded-2xl border border-gray-100 bg-gray-50 flex items-center justify-center min-h-[300px]">
-				{serverUrl ? (
-					<video
-						ref={videoRef}
-						autoPlay
-						playsInline
-						muted
-						className="h-full w-full object-cover"
-					/>
-				) : (
-					<div className="flex h-full items-center justify-center text-sm text-gray-400">
+	if (!serverUrl) {
+		return (
+			<div className={`flex items-center justify-center bg-slate-950 ${className}`}>
+				<div className="text-center">
+					<div className="mb-3 text-4xl opacity-30">📷</div>
+					<p className="text-sm font-mono" style={{ color: 'rgba(255,255,255,0.3)' }}>
 						Camera feed unavailable
-					</div>
-				)}
+					</p>
+				</div>
 			</div>
-		</div>
+		);
+	}
+
+	return (
+		<video
+			ref={videoRef}
+			autoPlay
+			playsInline
+			muted
+			className={className}
+			style={{ objectFit: 'cover' }}
+		/>
 	);
 }
