@@ -24,6 +24,17 @@ interface MapCanvasProps {
 	polyPoints: [number, number][];
 	drawingPoly: boolean;
 	supervisorActive: boolean;
+	/**
+	 * Zoom level applied to the canvas view.
+	 * 1 = show full map, 2 = show half the map area, etc.
+	 * When zoom > 1 the view centres on `viewCenter` (or the drone position if provided).
+	 */
+	zoom?: number;
+	/**
+	 * World-coordinate point to centre the zoomed view on.
+	 * Defaults to the drone position when not provided.
+	 */
+	viewCenter?: { x: number; y: number } | null;
 	onClick?: (e: React.MouseEvent<HTMLCanvasElement>) => void;
 	className?: string;
 }
@@ -40,6 +51,8 @@ export default function MapCanvas({
 	polyPoints,
 	drawingPoly,
 	supervisorActive,
+	zoom = 1,
+	viewCenter,
 	onClick,
 	className = '',
 }: MapCanvasProps) {
@@ -55,6 +68,23 @@ export default function MapCanvas({
 		const draw = () => {
 			ctx.clearRect(0, 0, size, size);
 
+			// ── Determine the canvas-space point to centre the zoom on ──────────
+			const clampedZoom = Math.max(1, zoom);
+			const focusWorld = viewCenter ?? dronePos;
+			const [focusCx, focusCy] = focusWorld
+				? worldToCanvas(focusWorld.x, focusWorld.y, mapDims, size)
+				: [size / 2, size / 2];
+
+			// Dark fallback background (visible at edges when zoomed out of SLAM bounds)
+			ctx.fillStyle = '#0a0f1e';
+			ctx.fillRect(0, 0, size, size);
+
+			// ── Apply zoom transform for all map content ─────────────────────────
+			ctx.save();
+			ctx.translate(size / 2, size / 2);
+			ctx.scale(clampedZoom, clampedZoom);
+			ctx.translate(-focusCx, -focusCy);
+
 			// 1. SLAM background
 			if (slamImgRef.current) {
 				ctx.drawImage(slamImgRef.current, 0, 0, size, size);
@@ -65,7 +95,7 @@ export default function MapCanvas({
 
 			// 2. Grid lines (5m spacing)
 			ctx.strokeStyle = 'rgba(0, 255, 136, 0.06)';
-			ctx.lineWidth = 1;
+			ctx.lineWidth = 1 / clampedZoom; // keep grid lines 1px regardless of zoom
 			const gridStep = 5;
 			const startX = Math.ceil(mapDims.origin_x / gridStep) * gridStep;
 			const startZ = Math.ceil(mapDims.origin_z / gridStep) * gridStep;
@@ -81,13 +111,12 @@ export default function MapCanvas({
 			// 3. Planned waypoints + flight path
 			if (waypoints.length > 1) {
 				ctx.strokeStyle = '#00ff88';
-				ctx.lineWidth = 2;
-				ctx.setLineDash([6, 4]);
+				ctx.lineWidth = 2 / clampedZoom;
+				ctx.setLineDash([6 / clampedZoom, 4 / clampedZoom]);
 				ctx.beginPath();
 				waypoints.forEach((wp, idx) => {
 					const [cx, cy] = worldToCanvas(wp.x, wp.y, mapDims, size);
-					if (idx === 0) ctx.moveTo(cx, cy);
-					else ctx.lineTo(cx, cy);
+					if (idx === 0) ctx.moveTo(cx, cy); else ctx.lineTo(cx, cy);
 				});
 				ctx.stroke();
 				ctx.setLineDash([]);
@@ -95,152 +124,118 @@ export default function MapCanvas({
 				waypoints.forEach((wp, idx) => {
 					const [cx, cy] = worldToCanvas(wp.x, wp.y, mapDims, size);
 					ctx.beginPath();
-					ctx.arc(cx, cy, 4, 0, Math.PI * 2);
-					ctx.fillStyle = '#00ff88';
-					ctx.fill();
-					ctx.strokeStyle = '#ffffff';
-					ctx.lineWidth = 1;
-					ctx.stroke();
+					ctx.arc(cx, cy, 4 / clampedZoom, 0, Math.PI * 2);
+					ctx.fillStyle = '#00ff88'; ctx.fill();
+					ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1 / clampedZoom; ctx.stroke();
 					ctx.fillStyle = '#ffffff';
-					ctx.font = '9px monospace';
+					ctx.font = `${9 / clampedZoom}px monospace`;
 					ctx.textAlign = 'center';
-					ctx.fillText((idx + 1).toString(), cx, cy - 8);
+					ctx.fillText((idx + 1).toString(), cx, cy - 8 / clampedZoom);
 				});
 			}
 
 			// 4. Poly drawing progress
 			if (polyPoints.length > 0) {
 				ctx.strokeStyle = '#f59e0b';
-				ctx.lineWidth = 2;
-				ctx.setLineDash([4, 4]);
+				ctx.lineWidth = 2 / clampedZoom;
+				ctx.setLineDash([4 / clampedZoom, 4 / clampedZoom]);
 				ctx.beginPath();
 				polyPoints.forEach(([px, py], idx) => {
 					const [cx, cy] = worldToCanvas(px, py, mapDims, size);
-					if (idx === 0) ctx.moveTo(cx, cy);
-					else ctx.lineTo(cx, cy);
+					if (idx === 0) ctx.moveTo(cx, cy); else ctx.lineTo(cx, cy);
 				});
 				ctx.stroke();
 				ctx.setLineDash([]);
 				polyPoints.forEach(([px, py]) => {
 					const [cx, cy] = worldToCanvas(px, py, mapDims, size);
-					ctx.beginPath();
-					ctx.arc(cx, cy, 5, 0, Math.PI * 2);
-					ctx.fillStyle = '#f59e0b';
-					ctx.fill();
-					ctx.strokeStyle = '#ffffff';
-					ctx.lineWidth = 1;
-					ctx.stroke();
+					ctx.beginPath(); ctx.arc(cx, cy, 5 / clampedZoom, 0, Math.PI * 2);
+					ctx.fillStyle = '#f59e0b'; ctx.fill();
+					ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1 / clampedZoom; ctx.stroke();
 				});
 			}
 
-			// 5a. Undetected pedestrians (demo overlay)
+			// 5a. Undetected pedestrians
 			allPedestrians.forEach(({ x, y, detected }) => {
 				if (detected) return;
 				const [cx, cy] = worldToCanvas(x, y, mapDims, size);
-				ctx.beginPath();
-				ctx.arc(cx, cy, 4, 0, Math.PI * 2);
-				ctx.fillStyle = 'rgba(200, 200, 200, 0.25)';
-				ctx.fill();
-				ctx.strokeStyle = 'rgba(200, 200, 200, 0.4)';
-				ctx.lineWidth = 1;
-				ctx.stroke();
+				ctx.beginPath(); ctx.arc(cx, cy, 4 / clampedZoom, 0, Math.PI * 2);
+				ctx.fillStyle = 'rgba(200,200,200,0.25)'; ctx.fill();
+				ctx.strokeStyle = 'rgba(200,200,200,0.4)'; ctx.lineWidth = 1 / clampedZoom; ctx.stroke();
 			});
 
 			// 5b. Supervisor-confirmed detections
 			confirmedDetections.forEach(({ id, x, y }) => {
 				const [cx, cy] = worldToCanvas(x, y, mapDims, size);
 				const zoneRadius = 4.0 * (size / mapDims.width);
-				ctx.beginPath();
-				ctx.arc(cx, cy, zoneRadius, 0, Math.PI * 2);
-				ctx.fillStyle = 'rgba(239, 68, 68, 0.07)';
-				ctx.fill();
-				ctx.strokeStyle = 'rgba(239, 68, 68, 0.25)';
-				ctx.lineWidth = 1.2;
-				ctx.setLineDash([5, 5]);
-				ctx.stroke();
-				ctx.setLineDash([]);
-				const pulseRadius = 11 + Math.sin(Date.now() / 150) * 4;
-				ctx.beginPath();
-				ctx.arc(cx, cy, pulseRadius, 0, Math.PI * 2);
-				ctx.fillStyle = 'rgba(255, 50, 50, 0.2)';
-				ctx.fill();
-				ctx.beginPath();
-				ctx.arc(cx, cy, 6, 0, Math.PI * 2);
-				ctx.fillStyle = '#ff3232';
-				ctx.fill();
-				ctx.strokeStyle = '#ffffff';
-				ctx.lineWidth = 1.5;
-				ctx.stroke();
-				ctx.fillStyle = '#fff';
-				ctx.font = 'bold 10px monospace';
+				ctx.beginPath(); ctx.arc(cx, cy, zoneRadius, 0, Math.PI * 2);
+				ctx.fillStyle = 'rgba(239,68,68,0.07)'; ctx.fill();
+				ctx.strokeStyle = 'rgba(239,68,68,0.25)'; ctx.lineWidth = 1.2 / clampedZoom;
+				ctx.setLineDash([5 / clampedZoom, 5 / clampedZoom]); ctx.stroke(); ctx.setLineDash([]);
+				const pulseRadius = (11 + Math.sin(Date.now() / 150) * 4) / clampedZoom;
+				ctx.beginPath(); ctx.arc(cx, cy, pulseRadius, 0, Math.PI * 2);
+				ctx.fillStyle = 'rgba(255,50,50,0.2)'; ctx.fill();
+				ctx.beginPath(); ctx.arc(cx, cy, 6 / clampedZoom, 0, Math.PI * 2);
+				ctx.fillStyle = '#ff3232'; ctx.fill();
+				ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5 / clampedZoom; ctx.stroke();
+				ctx.fillStyle = '#fff'; ctx.font = `bold ${10 / clampedZoom}px monospace`;
 				ctx.textAlign = 'center';
-				ctx.fillText(id.replace('PED_', '#'), cx, cy - 14);
+				ctx.fillText(id.replace('PED_', '#'), cx, cy - 14 / clampedZoom);
 			});
 
 			// 5c. Geo-projected detections
 			people.forEach((person) => {
 				const [cx, cy] = worldToCanvas(person.x, person.y, mapDims, size);
 				const zoneRadius = 4.0 * (size / mapDims.width);
-				ctx.beginPath();
-				ctx.arc(cx, cy, zoneRadius, 0, Math.PI * 2);
-				ctx.fillStyle = 'rgba(239, 68, 68, 0.08)';
-				ctx.fill();
-				ctx.strokeStyle = 'rgba(239, 68, 68, 0.3)';
-				ctx.lineWidth = 1.2;
-				ctx.setLineDash([5, 5]);
-				ctx.stroke();
-				ctx.setLineDash([]);
-				const pulseRadius = 12 + Math.sin(Date.now() / 150) * 4;
-				ctx.beginPath();
-				ctx.arc(cx, cy, pulseRadius, 0, Math.PI * 2);
-				ctx.fillStyle = 'rgba(239, 68, 68, 0.15)';
-				ctx.fill();
-				ctx.beginPath();
-				ctx.arc(cx, cy, 8, 0, Math.PI * 2);
-				ctx.fillStyle = 'rgba(239, 68, 68, 0.3)';
-				ctx.fill();
-				ctx.beginPath();
-				ctx.arc(cx, cy, 4, 0, Math.PI * 2);
-				ctx.fillStyle = '#ef4444';
-				ctx.fill();
-				ctx.fillStyle = '#ffffff';
-				ctx.font = '11px sans-serif';
+				ctx.beginPath(); ctx.arc(cx, cy, zoneRadius, 0, Math.PI * 2);
+				ctx.fillStyle = 'rgba(239,68,68,0.08)'; ctx.fill();
+				ctx.strokeStyle = 'rgba(239,68,68,0.3)'; ctx.lineWidth = 1.2 / clampedZoom;
+				ctx.setLineDash([5 / clampedZoom, 5 / clampedZoom]); ctx.stroke(); ctx.setLineDash([]);
+				const pulseRadius = (12 + Math.sin(Date.now() / 150) * 4) / clampedZoom;
+				ctx.beginPath(); ctx.arc(cx, cy, pulseRadius, 0, Math.PI * 2);
+				ctx.fillStyle = 'rgba(239,68,68,0.15)'; ctx.fill();
+				ctx.beginPath(); ctx.arc(cx, cy, 8 / clampedZoom, 0, Math.PI * 2);
+				ctx.fillStyle = 'rgba(239,68,68,0.3)'; ctx.fill();
+				ctx.beginPath(); ctx.arc(cx, cy, 4 / clampedZoom, 0, Math.PI * 2);
+				ctx.fillStyle = '#ef4444'; ctx.fill();
+				ctx.fillStyle = '#ffffff'; ctx.font = `${11 / clampedZoom}px sans-serif`;
 				ctx.textAlign = 'center';
-				ctx.fillText('👤', cx, cy - 12);
+				ctx.fillText('👤', cx, cy - 12 / clampedZoom);
 			});
 
 			// 6. Drone marker
 			if (dronePos) {
 				const [cx, cy] = worldToCanvas(dronePos.x, dronePos.y, mapDims, size);
-				ctx.beginPath();
-				ctx.arc(cx, cy, 16, 0, Math.PI * 2);
-				ctx.strokeStyle = 'rgba(0, 160, 255, 0.3)';
-				ctx.lineWidth = 1.5;
-				ctx.stroke();
-				ctx.beginPath();
-				ctx.arc(cx, cy, 7, 0, Math.PI * 2);
-				ctx.fillStyle = '#00a0ff';
-				ctx.fill();
-				ctx.strokeStyle = '#ffffff';
-				ctx.lineWidth = 2;
-				ctx.stroke();
+				ctx.beginPath(); ctx.arc(cx, cy, 16 / clampedZoom, 0, Math.PI * 2);
+				ctx.strokeStyle = 'rgba(0,160,255,0.3)'; ctx.lineWidth = 1.5 / clampedZoom; ctx.stroke();
+				ctx.beginPath(); ctx.arc(cx, cy, 7 / clampedZoom, 0, Math.PI * 2);
+				ctx.fillStyle = '#00a0ff'; ctx.fill();
+				ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2 / clampedZoom; ctx.stroke();
 			}
 
-			// 7. HUD overlay: map info
+			ctx.restore(); // ← end of zoom transform
+
+			// ── HUD overlay (NOT zoomed) ─────────────────────────────────────────
 			ctx.fillStyle = 'rgba(0,0,0,0.55)';
-			ctx.fillRect(4, size - 44, 160, 40);
+			ctx.fillRect(4, size - 44, 172, 40);
 			ctx.fillStyle = '#00ff88';
 			ctx.font = '9px monospace';
 			ctx.textAlign = 'left';
-			ctx.fillText(`COV ${mapDims.width.toFixed(0)}m × ${mapDims.length.toFixed(0)}m`, 10, size - 28);
-			ctx.fillText(`RES ${(mapDims.width / size).toFixed(3)}m/px${supervisorActive ? '  SUP ✓' : ''}`, 10, size - 14);
+			ctx.fillText(
+				`COV ${mapDims.width.toFixed(0)}m × ${mapDims.length.toFixed(0)}m${supervisorActive ? '  SUP ✓' : ''}`,
+				10, size - 28,
+			);
+			ctx.fillText(
+				`RES ${(mapDims.width / size).toFixed(3)}m/px  ZOOM ${clampedZoom.toFixed(1)}×`,
+				10, size - 14,
+			);
 
 			rafId = requestAnimationFrame(draw);
 		};
 
 		rafId = requestAnimationFrame(draw);
 		return () => cancelAnimationFrame(rafId);
-	}, [waypoints, polyPoints, people, dronePos, mapDims, allPedestrians, confirmedDetections, slamImgRef, supervisorActive, size]);
+	}, [waypoints, polyPoints, people, dronePos, mapDims, allPedestrians, confirmedDetections,
+		slamImgRef, supervisorActive, size, zoom, viewCenter]);
 
 	return (
 		<canvas

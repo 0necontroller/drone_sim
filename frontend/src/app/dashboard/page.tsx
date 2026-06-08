@@ -9,9 +9,11 @@ import FloatingPanel from '@/components/dashboard/FloatingPanel';
 import DroneStatsHUD from '@/components/dashboard/DroneStatsHUD';
 import MissionDialog from '@/components/dashboard/MissionDialog';
 import MissionMapFloat from '@/components/dashboard/MissionMapFloat';
+import MissionLog from '@/components/dashboard/MissionLog';
 import { useMapData } from '@/hooks/useMapData';
 import { serverUrl } from '@/lib/config';
 import type { ControlCommand, Telemetry } from '@/types/drone';
+import SlamViewer from '@/components/dashboard/SlamViewer';
 
 const PointCloudViewer = dynamic(
 	() => import('@/components/PointCloudViewer'),
@@ -24,7 +26,7 @@ const PointCloudViewer = dynamic(
 			>
 				Initialising 3D Viewer…
 			</div>
-		),
+		)
 	}
 );
 
@@ -43,7 +45,12 @@ export default function Page() {
 	const [telemetry, setTelemetry] = useState<Telemetry>({});
 	const [connection, setConnection] = useState('connecting');
 	const wsRef = useRef<WebSocket | null>(null);
-	const commandRef = useRef<ControlCommand>({ roll: 0, pitch: 0, yaw: 0, altitude_delta: 0 });
+	const commandRef = useRef<ControlCommand>({
+		roll: 0,
+		pitch: 0,
+		yaw: 0,
+		altitude_delta: 0
+	});
 
 	const [pointCloudMaximized, setPointCloudMaximized] = useState(false);
 	const [missionDialogOpen, setMissionDialogOpen] = useState(false);
@@ -106,11 +113,15 @@ export default function Page() {
 				background: 'rgba(255,255,255,0.08)',
 				border: '1px solid rgba(255,255,255,0.15)',
 				color: 'rgba(255,255,255,0.7)',
-				opacity: 0.8,
+				opacity: 0.8
 			}}
 			title={pointCloudMaximized ? 'Restore' : 'Maximize'}
 		>
-			{pointCloudMaximized ? <Minimize2 className="h-3 w-3" /> : <Maximize2 className="h-3 w-3" />}
+			{pointCloudMaximized ? (
+				<Minimize2 className="h-3 w-3" />
+			) : (
+				<Maximize2 className="h-3 w-3" />
+			)}
 		</button>
 	);
 
@@ -118,16 +129,16 @@ export default function Page() {
 	const missionHeader = (
 		<button
 			onClick={() => setMissionDialogOpen(true)}
-			className="flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[9px] font-bold uppercase tracking-wider transition-all hover:opacity-100 active:scale-95"
+			className="flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[9px] font-bold tracking-wider uppercase transition-all hover:opacity-100 active:scale-95"
 			style={{
 				background: 'rgba(0,255,136,0.12)',
 				border: '1px solid rgba(0,255,136,0.3)',
 				color: '#00ff88',
-				opacity: 0.9,
+				opacity: 0.9
 			}}
 		>
 			<Target className="h-3 w-3" />
-			Plan Mission
+			&nbsp; Plan Mission
 		</button>
 	);
 
@@ -146,15 +157,16 @@ export default function Page() {
 				className="pointer-events-none absolute inset-0 z-10"
 				style={{
 					background:
-						'radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.55) 100%)',
+						'radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.55) 100%)'
 				}}
 			/>
 			{/* Thin scanlines */}
 			<div
 				className="pointer-events-none absolute inset-0 z-10 opacity-[0.03]"
 				style={{
-					backgroundImage: 'repeating-linear-gradient(0deg, rgba(0,0,0,0.8) 0px, rgba(0,0,0,0.8) 1px, transparent 1px, transparent 2px)',
-					backgroundSize: '100% 2px',
+					backgroundImage:
+						'repeating-linear-gradient(0deg, rgba(0,0,0,0.8) 0px, rgba(0,0,0,0.8) 1px, transparent 1px, transparent 2px)',
+					backgroundSize: '100% 2px'
 				}}
 			/>
 
@@ -167,19 +179,34 @@ export default function Page() {
 				headerExtra={pointCloudHeader}
 				style={
 					pointCloudMaximized
-						? { left: 0, top: 0, width: '100vw', height: '100vh', borderRadius: 0, zIndex: 20 }
+						? {
+								left: 0,
+								top: 0,
+								width: '100vw',
+								height: '100vh',
+								borderRadius: 0,
+								zIndex: 20
+							}
 						: { width: 380, height: 300 }
 				}
 			>
 				<div
 					className="relative"
-					style={pointCloudMaximized ? { height: 'calc(100vh - 36px)' } : { height: 256 }}
+					style={
+						pointCloudMaximized
+							? { height: 'calc(100vh - 36px)' }
+							: { height: 256 }
+					}
 				>
 					<PointCloudViewer style={{ width: '100%', height: '100%' }} />
 					{/* Bottom-left watermark */}
 					<div
-						className="absolute bottom-2 left-2 rounded-md px-2 py-0.5 font-mono text-[9px] pointer-events-none"
-						style={{ background: 'rgba(0,0,0,0.5)', color: 'rgba(0,255,136,0.6)', border: '1px solid rgba(0,255,136,0.15)' }}
+						className="pointer-events-none absolute bottom-2 left-2 rounded-md px-2 py-0.5 font-mono text-[9px]"
+						style={{
+							background: 'rgba(0,0,0,0.5)',
+							color: 'rgba(0,255,136,0.6)',
+							border: '1px solid rgba(0,255,136,0.15)'
+						}}
 					>
 						LIDAR · 3D POINT CLOUD
 					</div>
@@ -190,7 +217,7 @@ export default function Page() {
 			<FloatingPanel
 				id="panel-stats"
 				title="Drone Stats"
-				defaultX={Math.round(iw() - 280)}
+				defaultX={Math.round(iw() + 70)}
 				defaultY={20}
 			>
 				<DroneStatsHUD telemetry={telemetry} connection={connection} />
@@ -204,40 +231,64 @@ export default function Page() {
 				defaultY={20}
 				headerExtra={missionHeader}
 			>
-				<div className="px-3 pb-3 pt-1">
+				<div className="px-3 pt-1 pb-3">
 					<div className="flex flex-col gap-1">
 						{/* Mission status pill */}
 						<div
 							className="flex items-center justify-between rounded-lg px-3 py-2"
-							style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}
+							style={{
+								background: 'rgba(255,255,255,0.04)',
+								border: '1px solid rgba(255,255,255,0.07)'
+							}}
 						>
-							<span className="text-[9px] font-mono uppercase" style={{ color: 'rgba(255,255,255,0.4)' }}>
+							<span
+								className="font-mono text-[9px] uppercase"
+								style={{ color: 'rgba(255,255,255,0.4)' }}
+							>
 								Status
 							</span>
 							<span
 								className="flex items-center gap-1 text-[9px] font-bold uppercase"
-								style={{ color: mapData.missionActive ? '#00ff88' : 'rgba(255,255,255,0.4)' }}
+								style={{
+									color: mapData.missionActive
+										? '#00ff88'
+										: 'rgba(255,255,255,0.4)'
+								}}
 							>
 								<span
 									className="h-1.5 w-1.5 rounded-full"
 									style={{
-										background: mapData.missionActive ? '#00ff88' : 'rgba(255,255,255,0.25)',
-										boxShadow: mapData.missionActive ? '0 0 6px #00ff88' : 'none',
+										background: mapData.missionActive
+											? '#00ff88'
+											: 'rgba(255,255,255,0.25)',
+										boxShadow: mapData.missionActive
+											? '0 0 6px #00ff88'
+											: 'none'
 									}}
 								/>
 								{mapData.missionActive ? 'AUTONOMOUS SEARCH' : 'STANDBY'}
 							</span>
 						</div>
 						{/* Detection count */}
-						{(mapData.confirmedDetections.length > 0 || mapData.people.length > 0) && (
+						{(mapData.confirmedDetections.length > 0 ||
+							mapData.people.length > 0) && (
 							<div
 								className="flex items-center justify-between rounded-lg px-3 py-1.5"
-								style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}
+								style={{
+									background: 'rgba(239,68,68,0.08)',
+									border: '1px solid rgba(239,68,68,0.2)'
+								}}
 							>
-								<span className="text-[9px] font-mono uppercase" style={{ color: 'rgba(239,68,68,0.6)' }}>
+								<span
+									className="font-mono text-[9px] uppercase"
+									style={{ color: 'rgba(239,68,68,0.6)' }}
+								>
 									Detections
 								</span>
-								<span className="font-mono text-sm font-bold" style={{ color: '#ef4444' }}>
+								<span
+									className="font-mono text-sm font-bold"
+									style={{ color: '#ef4444' }}
+								>
 									{mapData.confirmedDetections.length > 0
 										? mapData.confirmedDetections.length
 										: mapData.people.length}
@@ -252,8 +303,8 @@ export default function Page() {
 			<FloatingPanel
 				id="panel-controls"
 				title="Manual Controls"
-				defaultX={Math.round(iw() - 230)}
-				defaultY={Math.round(ih() - 420)}
+				defaultX={Math.round(iw() + 130)}
+				defaultY={Math.round(ih() - 480)}
 			>
 				<Controls
 					telemetry={telemetry}
@@ -268,8 +319,17 @@ export default function Page() {
 				<MissionMapFloat
 					mapData={mapData}
 					onManageMission={() => setMissionDialogOpen(true)}
-					defaultX={Math.round(iw() / 2 - 140)}
-					defaultY={Math.round(ih() - 290)}
+					defaultX={Math.round(iw() / 2 - 150)}
+					defaultY={Math.round(ih() - 300)}
+				/>
+			)}
+
+			{/* ── Mission Log (always visible once something is logged) ──────── */}
+			{mapData.missionLog.length > 0 && (
+				<MissionLog
+					entries={mapData.missionLog}
+					defaultX={20}
+					defaultY={Math.round(ih() - 400)}
 				/>
 			)}
 
@@ -279,26 +339,42 @@ export default function Page() {
 				style={{
 					background: 'rgba(6,10,22,0.75)',
 					backdropFilter: 'blur(12px)',
-					border: '1px solid rgba(255,255,255,0.08)',
+					border: '1px solid rgba(255,255,255,0.08)'
 				}}
 			>
-				{isConnected
-					? <Wifi className="h-3 w-3" style={{ color: '#00ff88' }} />
-					: <WifiOff className="h-3 w-3" style={{ color: '#ef4444' }} />
-				}
-				<span className="font-mono text-[9px] uppercase" style={{ color: isConnected ? '#00ff88' : '#ef4444' }}>
+				{isConnected ? (
+					<Wifi className="h-3 w-3" style={{ color: '#00ff88' }} />
+				) : (
+					<WifiOff className="h-3 w-3" style={{ color: '#ef4444' }} />
+				)}
+				<span
+					className="font-mono text-[9px] uppercase"
+					style={{ color: isConnected ? '#00ff88' : '#ef4444' }}
+				>
 					{isConnected ? 'LINK' : 'OFFLINE'}
 				</span>
 				{telemetry.time != null && (
 					<>
-						<span className="h-3 w-px" style={{ background: 'rgba(255,255,255,0.15)' }} />
-						<span className="font-mono text-[9px]" style={{ color: 'rgba(255,255,255,0.4)' }}>
+						<span
+							className="h-3 w-px"
+							style={{ background: 'rgba(255,255,255,0.15)' }}
+						/>
+						<span
+							className="font-mono text-[9px]"
+							style={{ color: 'rgba(255,255,255,0.4)' }}
+						>
 							T+{telemetry.time.toFixed(1)}s
 						</span>
 					</>
 				)}
-				<span className="h-3 w-px" style={{ background: 'rgba(255,255,255,0.15)' }} />
-				<span className="font-mono text-[9px]" style={{ color: 'rgba(255,255,255,0.3)' }}>
+				<span
+					className="h-3 w-px"
+					style={{ background: 'rgba(255,255,255,0.15)' }}
+				/>
+				<span
+					className="font-mono text-[9px]"
+					style={{ color: 'rgba(255,255,255,0.3)' }}
+				>
 					DRONE OPS
 				</span>
 			</div>

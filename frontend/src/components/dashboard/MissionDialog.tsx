@@ -30,6 +30,8 @@ export default function MissionDialog({ mapData, onClose }: MissionDialogProps) 
 		handleCanvasClick,
 	} = mapData;
 
+	const [stripWidth, setStripWidth] = useState(10);
+
 	const handleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
 		handleCanvasClick(e, 600);
 	};
@@ -185,6 +187,35 @@ export default function MissionDialog({ mapData, onClose }: MissionDialogProps) 
 						{/* Separator */}
 						<div className="h-px" style={{ background: 'rgba(255,255,255,0.07)' }} />
 
+						{/* Strip Width */}
+						<div className="flex flex-col gap-2">
+							<div className="flex items-center justify-between">
+								<p className="text-[9px] font-bold tracking-[0.25em] uppercase" style={{ color: 'rgba(255,255,255,0.35)' }}>
+									Strip Width
+								</p>
+								<span className="font-mono text-xs font-bold" style={{ color: '#00ff88' }}>
+									{stripWidth}m
+								</span>
+							</div>
+							<input
+								type="range"
+								min={5}
+								max={20}
+								step={1}
+								value={stripWidth}
+								onChange={(e) => setStripWidth(Number(e.target.value))}
+								className="w-full accent-emerald-400"
+								style={{ accentColor: '#00ff88' }}
+							/>
+							<div className="flex justify-between text-[8px] font-mono" style={{ color: 'rgba(255,255,255,0.25)' }}>
+								<span>5m (dense)</span>
+								<span>20m (sparse)</span>
+							</div>
+						</div>
+
+						{/* Separator */}
+						<div className="h-px" style={{ background: 'rgba(255,255,255,0.07)' }} />
+
 						{/* Launch */}
 						<div className="flex flex-col gap-2">
 							<p className="text-[9px] font-bold tracking-[0.25em] uppercase" style={{ color: 'rgba(255,255,255,0.35)' }}>
@@ -192,7 +223,7 @@ export default function MissionDialog({ mapData, onClose }: MissionDialogProps) 
 							</p>
 							<button
 								type="button"
-								onClick={launchMission}
+								onClick={() => launchMission({ stripWidth })}
 								disabled={polyPoints.length < 3 || missionActive}
 								className="flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-bold transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
 								style={{
