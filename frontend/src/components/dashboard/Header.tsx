@@ -13,7 +13,7 @@ export default function Header({
 	children
 }: HeaderProps) {
 	return (
-		<header className="mb-8 flex flex-row items-center gap-12">
+		<header className="mb-8 flex flex-row items-center justify-between gap-12">
 			<div className="flex w-fit flex-col gap-2">
 				<p className="text-sm font-medium tracking-[0.4em] text-gray-400 uppercase">
 					Drone Ops Console
