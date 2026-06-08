@@ -306,8 +306,10 @@ Mavic2Pro {
   ]
   cameraSlot [
     Camera {
-      width 1280
-      height 720
+      rotation 0 0 1 0.261827
+      rotationStep 0.261827
+      width 854
+      height 480
       near 0.2
       antiAliasing TRUE
     }

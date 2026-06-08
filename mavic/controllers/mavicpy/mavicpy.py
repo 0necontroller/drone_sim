@@ -42,6 +42,7 @@ class Mavic(Robot):
     TELEMETRY_PERIOD = 0.1
     CAMERA_PERIOD = 0.2
     POINTCLOUD_PERIOD = 1.0
+    SLAM_PERIOD = 0.1
     WS_URL = "ws://127.0.0.1:8001/api/v1/drone/controller"
 
     def __init__(self):
@@ -93,6 +94,7 @@ class Mavic(Robot):
         self._last_telemetry_time = 0.0
         self._last_camera_time = 0.0
         self._last_pointcloud_time = 0.0
+        self._last_slam_time = 0.0
         self._command_ts = 0.0
         self._last_altitude_command_ts = 0.0
         self._command = {
@@ -316,6 +318,25 @@ class Mavic(Robot):
                     print(f"Point cloud capture failed: {exc}")
                     self._last_pointcloud_time = sim_time
 
+            if (
+                WEBSOCKETS_AVAILABLE
+                and self.lidar is not None
+                and sim_time - self._last_slam_time >= self.SLAM_PERIOD
+            ):
+                try:
+                    scan = self._extract_2d_lidar_slice()
+                    if scan:
+                        self._queue_send({
+                            "type": "slam_scan",
+                            "scan": scan,
+                            "drone_rpy": list(self.imu.getRollPitchYaw()),
+                            "timestamp": sim_time,
+                        })
+                    self._last_slam_time = sim_time
+                except Exception as exc:
+                    print(f"SLAM scan failed: {exc}")
+                    self._last_slam_time = sim_time
+
     def _get_lidar_points(self):
         """Extract (x, y, z) points from LiDAR point cloud, filtering invalid values."""
         raw_points = self.lidar.getPointCloud()
@@ -331,6 +352,35 @@ class Mavic(Robot):
                     round(float(p.z), 3),
                 ])
         return points
+
+    def _extract_2d_lidar_slice(self) -> list | None:
+        """
+        Collapse the 3D point cloud to a 1D array of distances (mm) at a height
+        band that captures tree trunks and structures (1 m – 5 m above drone base).
+        BreezySLAM expects one distance per angular bin.
+        """
+        if self.lidar is None:
+            return None
+        point_cloud = self.lidar.getPointCloud()
+        if not point_cloud:
+            return None
+
+        lidar_res = self.lidar.getHorizontalResolution()
+        scan_mm = [6000.0] * lidar_res   # default = max range (no detection)
+
+        for i, pt in enumerate(point_cloud):
+            if not (np.isfinite(pt.x) and np.isfinite(pt.y) and np.isfinite(pt.z)):
+                continue
+            # Height filter: capture obstacles 1–5 m above the ground (drone is at ~6 m)
+            # pt.z is relative to the drone; obstacles below drone are negative
+            rel_z = pt.z  # negative = below drone
+            if -5.0 < rel_z < -1.0:   # between 1 m and 5 m below drone = tree range
+                idx = i % lidar_res
+                dist_mm = float(np.sqrt(pt.x**2 + pt.y**2)) * 1000.0
+                if dist_mm < scan_mm[idx]:
+                    scan_mm[idx] = dist_mm
+
+        return scan_mm
 
 
 robot = Mavic()

@@ -9,6 +9,7 @@ import os
 import time
 import cv2
 import numpy as np
+import math
 
 from dotenv import load_dotenv
 from typing import Any, Dict, Optional, Set
@@ -16,6 +17,13 @@ from typing import Any, Dict, Optional, Set
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
+
+# ── SLAM & PATH PLANNING ──────────────────────────────────────────────────────
+from bresenham import bresenham
+from breezyslam.algorithms import RMHC_SLAM
+from breezyslam.sensors import Laser
+from shapely.geometry import Polygon, LineString, Point
+
 
 try:
     from aiortc import RTCPeerConnection, RTCSessionDescription, RTCIceCandidate
@@ -43,6 +51,32 @@ try:
 except Exception as e:
     print(f"Warning: Could not load YOLO model: {e}")
     yolo_model = None
+
+
+# ── SLAM State and Engine ─────────────────────────────────────────────────────
+SLAM_MAP_PIXELS = 800        # 800×800 grid
+SLAM_MAP_METERS = 40.0       # covers a 40m × 40m area
+SLAM_RESOLUTION  = SLAM_MAP_METERS / SLAM_MAP_PIXELS  # 0.05 m/pixel
+
+# Sensor profile — must match your Webots LiDAR horizontal resolution
+LIDAR_SCAN_SIZE = 360        # set to lidar.getHorizontalResolution() in Webots
+
+slam_sensor = Laser(
+    scan_size=LIDAR_SCAN_SIZE,
+    scan_rate_hz=10,
+    detection_angle_degrees=360,
+    distance_no_detection_mm=6000,
+)
+slam_engine = RMHC_SLAM(slam_sensor, SLAM_MAP_PIXELS, SLAM_MAP_METERS)
+slam_map_bytes = bytearray(SLAM_MAP_PIXELS * SLAM_MAP_PIXELS)
+slam_lock = asyncio.Lock()
+
+# Shared state for detections and flight plan
+detected_people: list[dict] = []          # [{x, y, ts}, ...]
+active_flight_path: list[list[float]] = []  # [[x,y], [x,y], ...]
+current_waypoint_idx: int = 0
+autonomous_mode: bool = False
+# ──────────────────────────────────────────────────────────────────────────────
 
 
 load_dotenv()
@@ -138,6 +172,95 @@ async def pointcloud_data() -> JSONResponse:
     return JSONResponse({"points": points, "timestamp": ts})
 
 
+@app.post("/api/v1/drone/plan_flight")
+async def plan_flight(body: dict) -> JSONResponse:
+    """
+    Body: {
+      "polygon": [[x, y], ...],      # in Webots meters
+      "altitude": 6.0,
+      "strip_width": 5.0,             # metres between lawnmower passes
+      "coordinate_type": "meters"     # "meters" | "gps"
+    }
+    Returns: { "waypoints": [[x,y,z], ...] }
+    """
+    raw_poly = body.get("polygon", [])
+    altitude  = float(body.get("altitude", 6.0))
+    strip_w   = float(body.get("strip_width", 5.0))
+
+    if len(raw_poly) < 3:
+        return JSONResponse({"error": "polygon must have >= 3 points"}, status_code=400)
+
+    try:
+        poly = Polygon(raw_poly)
+        if not poly.is_valid:
+            poly = poly.buffer(0)
+            if not poly.is_valid:
+                return JSONResponse({"error": "invalid polygon geometry"}, status_code=400)
+
+        minx, miny, maxx, maxy = poly.bounds
+
+        waypoints = []
+        going_right = True
+        y = miny + strip_w / 2.0
+
+        while y <= maxy:
+            line = LineString([(minx, y), (maxx, y)])
+            intersection = poly.intersection(line)
+            
+            if not intersection.is_empty:
+                lines = []
+                if intersection.geom_type == 'LineString':
+                    lines.append(intersection)
+                elif intersection.geom_type == 'MultiLineString':
+                    lines.extend(intersection.geoms)
+                elif intersection.geom_type == 'GeometryCollection':
+                    for geom in intersection.geoms:
+                        if geom.geom_type == 'LineString':
+                            lines.append(geom)
+
+                lines.sort(key=lambda l: l.coords[0][0])
+                
+                if not going_right:
+                    lines = lines[::-1]
+                
+                for l in lines:
+                    coords = list(l.coords)
+                    if len(coords) >= 2:
+                        p1 = coords[0]
+                        p2 = coords[-1]
+                        if going_right:
+                            waypoints.append([p1[0], p1[1], altitude])
+                            waypoints.append([p2[0], p2[1], altitude])
+                        else:
+                            waypoints.append([p2[0], p2[1], altitude])
+                            waypoints.append([p1[0], p1[1], altitude])
+                
+                going_right = not going_right
+            
+            y += strip_w
+
+        global active_flight_path, current_waypoint_idx, autonomous_mode
+        active_flight_path = [[w[0], w[1]] for w in waypoints]
+        current_waypoint_idx = 0
+        autonomous_mode = True
+
+        await broadcast_dashboard({
+            "type": "flight_plan",
+            "waypoints": waypoints,
+            "timestamp": time.time(),
+        })
+        return JSONResponse({"waypoints": waypoints, "count": len(waypoints)})
+    except Exception as e:
+        return JSONResponse({"error": f"Failed to plan flight path: {str(e)}"}, status_code=500)
+
+
+@app.post("/api/v1/drone/stop_autonomous")
+async def stop_autonomous() -> JSONResponse:
+    global autonomous_mode
+    autonomous_mode = False
+    return JSONResponse({"status": "stopped"})
+
+
 if AIORTC_AVAILABLE:
     class CameraTrack(MediaStreamTrack):
         kind = "video"
@@ -169,6 +292,7 @@ if AIORTC_AVAILABLE:
 
 @app.websocket("/api/v1/drone/ws")
 async def drone_ws(ws: WebSocket) -> None:
+    global autonomous_mode
     await ws.accept()
     dashboard_clients.add(ws)
     async with state.lock:
@@ -200,24 +324,25 @@ async def drone_ws(ws: WebSocket) -> None:
                     "target_altitude": command.get("target_altitude"),
                 }
                 state.command_ts = time.time()
-            async with controller_lock:
-                if controller_ws is not None:
-                    await controller_ws.send_text(
-                        json.dumps(
-                            {
-                                "type": "control",
-                                "command": state.command,
-                                "timestamp": state.command_ts,
-                            }
+            if not autonomous_mode:
+                async with controller_lock:
+                    if controller_ws is not None:
+                        await controller_ws.send_text(
+                            json.dumps(
+                                {
+                                    "type": "control",
+                                    "command": state.command,
+                                    "timestamp": state.command_ts,
+                                }
+                            )
                         )
-                    )
     except WebSocketDisconnect:
         dashboard_clients.discard(ws)
 
 
 @app.websocket("/api/v1/drone/controller")
 async def drone_controller(ws: WebSocket) -> None:
-    global controller_ws
+    global controller_ws, autonomous_mode, active_flight_path, current_waypoint_idx, detected_people
     await ws.accept()
     async with controller_lock:
         controller_ws = ws
@@ -240,6 +365,65 @@ async def drone_controller(ws: WebSocket) -> None:
                         "timestamp": state.telemetry_ts,
                     }
                 )
+
+                # Autonomous waypoint command injection
+                if autonomous_mode and active_flight_path:
+                    telem_data = state.telemetry
+                    drone_x = telem_data.get("x", 0.0)
+                    drone_y = telem_data.get("y", 0.0)
+                    drone_z = telem_data.get("z", 0.0)
+                    TARGET_ALT = 6.0
+                    WAYPOINT_RADIUS = 1.5
+
+                    if current_waypoint_idx < len(active_flight_path):
+                        wp = active_flight_path[current_waypoint_idx]
+                        dist = math.sqrt((wp[0]-drone_x)**2 + (wp[1]-drone_y)**2)
+                        if dist < WAYPOINT_RADIUS:
+                            current_waypoint_idx += 1
+
+                        if current_waypoint_idx < len(active_flight_path):
+                            wp = active_flight_path[current_waypoint_idx]
+                            # Compute heading error and issue pitch/yaw commands
+                            bearing = math.atan2(wp[1]-drone_y, wp[0]-drone_x)
+                            drone_yaw = telem_data.get("yaw", 0.0)
+                            yaw_err = bearing - drone_yaw
+                            # Normalise to [-π, π]
+                            while yaw_err >  math.pi: yaw_err -= 2*math.pi
+                            while yaw_err < -math.pi: yaw_err += 2*math.pi
+
+                            # Only steer & pitch if we are at safe target altitude (within 1.0m)
+                            if drone_z >= TARGET_ALT - 1.0:
+                                yaw_cmd = float(max(-1.3, min(1.3, yaw_err * 1.0)))
+                                # Only pitch forward (negative value) if we are aligned with target heading
+                                if abs(yaw_err) < 0.25:  # within ~14 degrees of target course
+                                    pitch_cmd = -2.0 if dist > 2.0 else -0.5
+                                else:
+                                    pitch_cmd = 0.0
+                            else:
+                                # Just climb vertically to reach target height safely first
+                                yaw_cmd = 0.0
+                                pitch_cmd = 0.0
+
+                            alt_delta = max(-0.5, min(0.5, TARGET_ALT - drone_z))
+
+                            auto_command = {
+                                "roll": 0.0,
+                                "pitch": pitch_cmd,
+                                "yaw": yaw_cmd,
+                                "altitude_delta": alt_delta,
+                                "target_altitude": TARGET_ALT,
+                            }
+                            async with controller_lock:
+                                if controller_ws is not None:
+                                    await controller_ws.send_text(json.dumps({
+                                        "type": "control",
+                                        "command": auto_command,
+                                        "timestamp": time.time(),
+                                    }))
+                    else:
+                        # Mission complete
+                        autonomous_mode = False
+                        await broadcast_dashboard({"type": "mission_complete", "timestamp": time.time()})
             elif payload_type == "camera":
                 frame_b64 = payload.get("frame")
                 if not frame_b64:
@@ -280,6 +464,74 @@ async def drone_controller(ws: WebSocket) -> None:
                             # 4. Re-compress the annotated matrix back into standard JPEG bytes
                             _, encoded_img = cv2.imencode('.jpg', cv_img)
                             frame = encoded_img.tobytes()
+
+                            # After YOLO inference, also project detections to world coordinates
+                            geo_detections = []
+                            async with state.lock:
+                                telem = dict(state.telemetry)
+
+                            drone_xyz = [telem.get("x", 0.0), telem.get("y", 0.0), telem.get("z", 6.0)]
+                            drone_rpy = [telem.get("roll", 0.0), telem.get("pitch", 0.0), telem.get("yaw", 0.0)]
+                            GIMBAL_PITCH = 0.349   # ~20° down — adjust to match your camera mount
+                            HFOV         = 1.047   # ~60° — check your Webots Camera HFOV field
+
+                            h_img, w_img = cv_img.shape[:2]
+                            fx = (w_img / 2.0) / np.tan(HFOV / 2.0)
+                            fy = fx
+
+                            for result in results:
+                                for box in result.boxes:
+                                    if int(box.cls.item()) != 0:   # persons only for geo-tagging
+                                        continue
+                                    x1, y1, x2, y2 = box.xyxy[0].tolist()
+                                    u = (x1 + x2) / 2.0
+                                    v = (y1 + y2) / 2.0
+
+                                    # Camera-space ray
+                                    ray_c = np.array([(u - w_img/2) / fx, (v - h_img/2) / fy, 1.0])
+                                    ray_c /= np.linalg.norm(ray_c)
+
+                                    # Gimbal pitch rotation (camera tilted downward)
+                                    gp = GIMBAL_PITCH
+                                    R_gimbal = np.array([
+                                        [1, 0,           0          ],
+                                        [0, np.cos(gp), -np.sin(gp)],
+                                        [0, np.sin(gp),  np.cos(gp)],
+                                    ])
+
+                                    # Drone attitude
+                                    r, p, y_ang = drone_rpy
+                                    R_z = np.array([[np.cos(y_ang),-np.sin(y_ang),0],[np.sin(y_ang),np.cos(y_ang),0],[0,0,1]])
+                                    R_y = np.array([[np.cos(p),0,np.sin(p)],[0,1,0],[-np.sin(p),0,np.cos(p)]])
+                                    R_x = np.array([[1,0,0],[0,np.cos(r),-np.sin(r)],[0,np.sin(r),np.cos(r)]])
+                                    R_drone = R_z @ R_y @ R_x
+
+                                    ray_world = R_drone @ R_gimbal @ ray_c
+                                    if ray_world[2] >= 0:
+                                        continue   # ray points skyward
+
+                                    drone_z = drone_xyz[2]
+                                    t = -drone_z / ray_world[2]
+                                    world_x = drone_xyz[0] + t * ray_world[0]
+                                    world_y = drone_xyz[1] + t * ray_world[1]
+
+                                    geo_detections.append({"x": round(float(world_x), 2), "y": round(float(world_y), 2)})
+
+                            # Deduplicate and store
+                            for det in geo_detections:
+                                if not any(
+                                    abs(det["x"] - p["x"]) < 1.5 and abs(det["y"] - p["y"]) < 1.5
+                                    for p in detected_people
+                                ):
+                                    detected_people.append({**det, "ts": time.time()})
+
+                            # Broadcast updated detections
+                            if geo_detections:
+                                await broadcast_dashboard({
+                                    "type": "detections",
+                                    "people": detected_people,
+                                    "timestamp": time.time(),
+                                })
                     except Exception as img_err:
                         # Fallback to saving raw frames if image manipulation fails
                         print(f"YOLO Processing failed, bypassing: {img_err}")
@@ -301,6 +553,37 @@ async def drone_controller(ws: WebSocket) -> None:
                         "timestamp": ts,
                     }
                 )
+            elif payload_type == "slam_scan":
+                scan_data = payload.get("scan", [])
+                drone_rpy = payload.get("drone_rpy", [0.0, 0.0, 0.0])
+                if scan_data and len(scan_data) == LIDAR_SCAN_SIZE:
+                    async with state.lock:
+                        telem = dict(state.telemetry)
+                    async with slam_lock:
+                        gps_x_mm = telem.get("x", 0.0) * 1000.0
+                        gps_y_mm = telem.get("y", 0.0) * 1000.0
+                        gps_yaw_deg = telem.get("yaw", 0.0) * (180.0 / 3.14159)
+                        
+                        slam_engine.update(scan_data, pose=(gps_x_mm, gps_y_mm, gps_yaw_deg), should_update_map=True)
+                        slam_engine.getmap(slam_map_bytes)
+                        x_mm, y_mm, theta_deg = slam_engine.getpos()
+
+                    np_map = np.frombuffer(slam_map_bytes, dtype=np.uint8).reshape(
+                        (SLAM_MAP_PIXELS, SLAM_MAP_PIXELS)
+                    )
+                    _, png_buf = cv2.imencode(".png", np_map)
+                    map_b64 = base64.b64encode(png_buf).decode("ascii")
+
+                    await broadcast_dashboard({
+                        "type": "slam_update",
+                        "map_b64": map_b64,
+                        "map_pixels": SLAM_MAP_PIXELS,
+                        "map_meters": SLAM_MAP_METERS,
+                        "slam_x_mm": x_mm,
+                        "slam_y_mm": y_mm,
+                        "slam_theta_deg": theta_deg,
+                        "timestamp": payload.get("timestamp", time.time()),
+                    })
     except WebSocketDisconnect:
         async with controller_lock:
             if controller_ws is ws:

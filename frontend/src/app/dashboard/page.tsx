@@ -1,15 +1,15 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
+import { useEffect, useRef, useState } from 'react';
+import CameraFeed from '@/components/dashboard/CameraFeed';
+import Controls from '@/components/dashboard/Controls';
+import Header from '@/components/dashboard/Header';
+import MapOverlay from '@/components/dashboard/MapOverlay';
+import SensorData from '@/components/dashboard/SensorData';
 import { serverUrl } from '@/lib/config';
 import { bodyFont } from '@/lib/fonts';
-import { Telemetry, ControlCommand } from '@/types/drone';
-
-import Header from '@/components/dashboard/Header';
-import Controls from '@/components/dashboard/Controls';
-import CameraFeed from '@/components/dashboard/CameraFeed';
-import SensorData from '@/components/dashboard/SensorData';
+import type { ControlCommand, Telemetry } from '@/types/drone';
 
 const PointCloudViewer = dynamic(
 	() => import('@/components/PointCloudViewer'),
@@ -137,6 +137,9 @@ export default function Page() {
 							</div>
 						</div>
 					</div>
+
+					{/* Tactical Map & Mission Control */}
+					<MapOverlay wsUrl={toWsUrl(serverUrl)} />
 
 					{/* Bottom Row: Sensor Data */}
 					<SensorData telemetry={telemetry} />
