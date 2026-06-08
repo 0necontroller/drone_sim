@@ -105,21 +105,21 @@ export default function Page() {
 			className={`${bodyFont.className} min-h-screen bg-gray-50/50 pb-16 text-gray-900`}
 		>
 			<div className="">
-				<Header connection={connection} telemetry={telemetry} />
+				<Header connection={connection} telemetry={telemetry}>
+					{/* Left: Controls Card */}
+					<div className="h-full w-full shrink-0 lg:w-80">
+						<Controls
+							telemetry={telemetry}
+							commandRef={commandRef}
+							updateCommand={updateCommand}
+							sendOnce={sendOnce}
+						/>
+					</div>
+				</Header>
 
 				<main className="flex flex-col gap-6">
 					{/* Top Interaction Row */}
-					<div className="flex h-[400px] flex-col gap-6 lg:flex-row">
-						{/* Left: Controls Card */}
-						<div className="h-full w-full shrink-0 lg:w-80">
-							<Controls
-								telemetry={telemetry}
-								commandRef={commandRef}
-								updateCommand={updateCommand}
-								sendOnce={sendOnce}
-							/>
-						</div>
-
+					<div className="flex h-[500px] flex-col gap-6 lg:flex-row">
 						{/* Middle: Camera Feed */}
 						<div className="h-full min-w-0 flex-1">
 							<CameraFeed />

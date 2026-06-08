@@ -258,7 +258,7 @@ async def drone_controller(ws: WebSocket) -> None:
 
                         if cv_img is not None:
                             # 2. Run inference (classes=0 filters for pedestrians only)
-                            results = yolo_model.predict(source=cv_img, classes=[0,2], conf=0.45, verbose=False)
+                            results = yolo_model.predict(source=cv_img, classes=[0,2], conf=0.40, verbose=False)
                             
                             # 3. Draw bounding boxes over the image matrix
                             for result in results:

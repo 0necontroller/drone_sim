@@ -205,7 +205,7 @@ SquareManhole {
   translation 0 0 -0.03
 }
 CardboardBox {
-  translation -0.730157 -1.22891 0.3
+  translation -0.720498 -1.2315 0.3
   rotation 0 0 1 -1.8325953071795862
 }
 TeslaModel3Simple {
@@ -306,9 +306,10 @@ Mavic2Pro {
   ]
   cameraSlot [
     Camera {
-      width 400
-      height 240
+      width 1280
+      height 720
       near 0.2
+      antiAliasing TRUE
     }
   ]
 }
