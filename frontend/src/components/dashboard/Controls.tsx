@@ -16,7 +16,7 @@ export default function Controls({
 }: ControlsProps) {
 	return (
 		<div className="flex flex-row gap-6">
-			<div className="flex flex-1 flex-row rounded-3xl border border-gray-100 bg-white p-6 shadow-sm">
+			<div className="flex flex-1 flex-row gap-6 rounded-3xl border border-gray-100 bg-white p-6 shadow-sm">
 				<div className="mb-6 flex flex-col gap-2">
 					<p className="text-xs font-semibold tracking-[0.2em] text-gray-400 uppercase">
 						Control
@@ -67,7 +67,7 @@ export default function Controls({
 			</div>
 
 			{/* Altitude Controls */}
-			<div className="mt-2 w-full rounded-2xl border border-gray-100 bg-white p-4">
+			<div className="mt-2 w-full gap-6 rounded-2xl border border-gray-100 bg-white p-4">
 				<p className="mb-3 text-xs font-medium tracking-[0.2em] text-gray-500 uppercase">
 					Altitude
 				</p>

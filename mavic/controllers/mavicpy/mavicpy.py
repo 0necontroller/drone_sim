@@ -1,6 +1,6 @@
 """mavicpy controller."""
 
-from controller import Robot
+from controller import Supervisor
 import base64
 import io
 import json
@@ -32,7 +32,7 @@ def clamp(value, value_min, value_max):
     return min(max(value, value_min), value_max)
 
 
-class Mavic(Robot):
+class Mavic(Supervisor):
     K_VERTICAL_THRUST = 68.5
     K_VERTICAL_OFFSET = 0.6
     K_VERTICAL_P = 3.0
@@ -107,6 +107,10 @@ class Mavic(Robot):
         self._command_lock = threading.Lock()
         self._outgoing = queue.Queue(maxsize=3)
 
+        self._pending_waypoints = None
+        self._waypoints_lock = threading.Lock()
+        self._last_drawn_count = 0
+
         if WEBSOCKETS_AVAILABLE:
             self._start_ws_thread()
         else:
@@ -150,18 +154,22 @@ class Mavic(Robot):
                 payload = json.loads(message)
             except json.JSONDecodeError:
                 continue
-            if payload.get("type") != "control":
-                continue
-            command = payload.get("command", payload)
-            with self._command_lock:
-                self._command = {
-                    "roll": float(command.get("roll", 0.0)),
-                    "pitch": float(command.get("pitch", 0.0)),
-                    "yaw": float(command.get("yaw", 0.0)),
-                    "altitude_delta": float(command.get("altitude_delta", 0.0)),
-                    "target_altitude": command.get("target_altitude"),
-                }
-                self._command_ts = time.time()
+            payload_type = payload.get("type")
+            if payload_type == "control":
+                command = payload.get("command", payload)
+                with self._command_lock:
+                    self._command = {
+                        "roll": float(command.get("roll", 0.0)),
+                        "pitch": float(command.get("pitch", 0.0)),
+                        "yaw": float(command.get("yaw", 0.0)),
+                        "altitude_delta": float(command.get("altitude_delta", 0.0)),
+                        "target_altitude": command.get("target_altitude"),
+                    }
+                    self._command_ts = time.time()
+            elif payload_type == "waypoints":
+                wps = payload.get("waypoints", [])
+                with self._waypoints_lock:
+                    self._pending_waypoints = wps
 
     def _queue_send(self, payload):
         try:
@@ -176,6 +184,17 @@ class Mavic(Robot):
     def run(self):
         while self.step(self.time_step) != -1:
             sim_time = self.getTime()
+
+            # Check for new waypoints to visualize
+            with self._waypoints_lock:
+                if self._pending_waypoints is not None:
+                    waypoints_to_draw = self._pending_waypoints
+                    self._pending_waypoints = None
+                else:
+                    waypoints_to_draw = None
+
+            if waypoints_to_draw is not None:
+                self.update_waypoints_visualization(waypoints_to_draw)
 
             roll, pitch, yaw = self.imu.getRollPitchYaw()
             altitude = self.gps.getValues()[2]
@@ -390,6 +409,86 @@ class Mavic(Robot):
                     scan_mm[idx] = dist_mm
 
         return scan_mm
+
+    def update_waypoints_visualization(self, waypoints):
+        """Draw waypoint spheres and line trajectory in Webots UI using Supervisor API."""
+        try:
+            # 1. Clean up previous waypoints
+            for idx in range(self._last_drawn_count):
+                node = self.getFromDef(f"WAYPOINT_{idx}")
+                if node:
+                    node.remove()
+
+            # 2. Clean up previous flight path line
+            path_node = self.getFromDef("FLIGHT_PATH")
+            if path_node:
+                path_node.remove()
+
+            self._last_drawn_count = 0
+
+            if not waypoints:
+                return
+
+            # 3. Retrieve children field of world root
+            root_node = self.getRoot()
+            children_field = root_node.getField("children")
+
+            # 4. Import new waypoint spheres
+            for idx, wp in enumerate(waypoints):
+                wp_def_name = f"WAYPOINT_{idx}"
+                x = wp[0]
+                y = wp[1]
+                z = wp[2] if len(wp) > 2 else 6.0
+
+                vrml_string = f"""
+                DEF {wp_def_name} Solid {{
+                  translation {x} {y} {z}
+                  children [
+                    Shape {{
+                      appearance Appearance {{
+                        material Material {{ diffuseColor 1 0 0 emissiveColor 1 0 0 }}
+                      }}
+                      geometry Sphere {{ radius 0.25 }}
+                    }}
+                  ]
+                }}
+                """
+                children_field.importMFNodeFromString(-1, vrml_string)
+
+            self._last_drawn_count = len(waypoints)
+
+            # 5. Import new flight path line connecting waypoints
+            if len(waypoints) > 1:
+                coord_strings = []
+                index_strings = []
+                for idx, wp in enumerate(waypoints):
+                    x = wp[0]
+                    y = wp[1]
+                    z = wp[2] if len(wp) > 2 else 6.0
+                    coord_strings.append(f"{x} {y} {z}")
+                    index_strings.append(str(idx))
+                index_strings.append("-1")
+
+                vertices_block = ", ".join(coord_strings)
+                indices_block = ", ".join(index_strings)
+
+                line_vrml = f"""
+                DEF FLIGHT_PATH Shape {{
+                  appearance Appearance {{
+                    material Material {{ diffuseColor 0 1 0 emissiveColor 0 1 0 }}
+                  }}
+                  geometry IndexedLineSet {{
+                    coord Coordinate {{
+                      point [ {vertices_block} ]
+                    }}
+                    coordIndex [ {indices_block} ]
+                  }}
+                }}
+                """
+                children_field.importMFNodeFromString(-1, line_vrml)
+
+        except Exception as e:
+            print(f"Error updating waypoint visualization: {e}")
 
 
 robot = Mavic()

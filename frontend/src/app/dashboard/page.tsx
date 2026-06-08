@@ -107,14 +107,12 @@ export default function Page() {
 			<div className="">
 				<Header connection={connection} telemetry={telemetry}>
 					{/* Left: Controls Card */}
-					<div className="h-full w-full shrink-0 lg:w-80">
-						<Controls
-							telemetry={telemetry}
-							commandRef={commandRef}
-							updateCommand={updateCommand}
-							sendOnce={sendOnce}
-						/>
-					</div>
+					<Controls
+						telemetry={telemetry}
+						commandRef={commandRef}
+						updateCommand={updateCommand}
+						sendOnce={sendOnce}
+					/>
 				</Header>
 
 				<main className="flex flex-col gap-6">

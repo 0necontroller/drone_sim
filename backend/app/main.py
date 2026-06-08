@@ -74,6 +74,7 @@ slam_lock = asyncio.Lock()
 # Shared state for detections and flight plan
 detected_people: list[dict] = []          # [{x, y, ts}, ...]
 active_flight_path: list[list[float]] = []  # [[x,y], [x,y], ...]
+active_waypoints_3d: list[list[float]] = [] # [[x,y,z], ...]
 current_waypoint_idx: int = 0
 autonomous_mode: bool = False
 returning_home: bool = False
@@ -243,8 +244,9 @@ async def plan_flight(body: dict) -> JSONResponse:
             
             y += strip_w
 
-        global active_flight_path, current_waypoint_idx, autonomous_mode, returning_home
+        global active_flight_path, current_waypoint_idx, autonomous_mode, returning_home, active_waypoints_3d
         active_flight_path = [[w[0], w[1]] for w in waypoints]
+        active_waypoints_3d = waypoints
         current_waypoint_idx = 0
         autonomous_mode = True
         returning_home = False
@@ -254,6 +256,15 @@ async def plan_flight(body: dict) -> JSONResponse:
             "waypoints": waypoints,
             "timestamp": time.time(),
         })
+        
+        # Forward waypoints to the Webots controller
+        async with controller_lock:
+            if controller_ws is not None:
+                await controller_ws.send_text(json.dumps({
+                    "type": "waypoints",
+                    "waypoints": waypoints
+                }))
+                
         return JSONResponse({"waypoints": waypoints, "count": len(waypoints)})
     except Exception as e:
         return JSONResponse({"error": f"Failed to plan flight path: {str(e)}"}, status_code=500)
@@ -261,9 +272,20 @@ async def plan_flight(body: dict) -> JSONResponse:
 
 @app.post("/api/v1/drone/stop_autonomous")
 async def stop_autonomous() -> JSONResponse:
-    global autonomous_mode, returning_home
+    global autonomous_mode, returning_home, active_waypoints_3d, active_flight_path
     autonomous_mode = False
     returning_home = True
+    active_waypoints_3d = []
+    active_flight_path = []
+    
+    # Clear waypoints on the Webots controller
+    async with controller_lock:
+        if controller_ws is not None:
+            await controller_ws.send_text(json.dumps({
+                "type": "waypoints",
+                "waypoints": []
+            }))
+            
     return JSONResponse({"status": "returning_home"})
 
 
@@ -358,10 +380,20 @@ async def drone_ws(ws: WebSocket) -> None:
 
 @app.websocket("/api/v1/drone/controller")
 async def drone_controller(ws: WebSocket) -> None:
-    global controller_ws, autonomous_mode, active_flight_path, current_waypoint_idx, detected_people
+    global controller_ws, autonomous_mode, active_flight_path, current_waypoint_idx, detected_people, active_waypoints_3d, returning_home, home_x, home_y, home_set
     await ws.accept()
     async with controller_lock:
         controller_ws = ws
+        
+    # Send existing active waypoints to the newly connected controller so it draws them
+    if active_waypoints_3d and autonomous_mode:
+        try:
+            await ws.send_text(json.dumps({
+                "type": "waypoints",
+                "waypoints": active_waypoints_3d
+            }))
+        except Exception as e:
+            print(f"Failed to send initial waypoints to controller: {e}")
     try:
         while True:
             message = await ws.receive_text()
@@ -389,15 +421,12 @@ async def drone_controller(ws: WebSocket) -> None:
                 drone_z = telem_data.get("z", 0.0)
                 drone_yaw = telem_data.get("yaw", 0.0)
 
-                global home_x, home_y, home_set
                 if not home_set and telem_data.get("x") is not None:
                     home_x = drone_x
                     home_y = drone_y
                     home_set = True
 
                 # 2. Autonomous Waypoint & Return Home State Machine
-                global autonomous_mode, returning_home, active_flight_path, current_waypoint_idx
-                
                 target_wp = None
                 target_alt = 6.0
                 should_land = False
@@ -417,7 +446,16 @@ async def drone_controller(ws: WebSocket) -> None:
                         # Search mission completed -> transition to Return to Launch
                         autonomous_mode = False
                         returning_home = True
+                        active_waypoints_3d = []
                         await broadcast_dashboard({"type": "mission_complete", "timestamp": time.time()})
+                        
+                        # Clear waypoints on the Webots controller
+                        async with controller_lock:
+                            if controller_ws is not None:
+                                await controller_ws.send_text(json.dumps({
+                                    "type": "waypoints",
+                                    "waypoints": []
+                                }))
 
                 if returning_home:
                     target_wp = [home_x, home_y]
