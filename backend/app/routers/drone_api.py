@@ -6,11 +6,14 @@ import json
 import math
 import time
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse, StreamingResponse
 from shapely.geometry import LineString, Polygon
+from sqlalchemy.orm import Session
 
 from app.broadcast import broadcast_dashboard
+from app.database import get_db
+from app.models import Mission
 from app.state import connections, controller_lock, flight, state
 
 router = APIRouter(prefix="/api/v1/drone", tags=["drone"])
@@ -70,7 +73,7 @@ async def get_world_state() -> JSONResponse:
 # ── Mission planning ──────────────────────────────────────────────────────────
 
 @router.post("/plan_flight")
-async def plan_flight(body: dict) -> JSONResponse:
+async def plan_flight(body: dict, db: Session = Depends(get_db)) -> JSONResponse:
     """Generate a lawnmower flight path and start the autonomous mission.
 
     Body: ``{"polygon": [[x,y], ...], "altitude": 11.0, "strip_width": 10.0}``
@@ -115,11 +118,30 @@ async def plan_flight(body: dict) -> JSONResponse:
                 going_right = not going_right
             y += strip_w
 
+        # End previous mission if it exists
+        if flight.current_mission_id:
+            old_mission = db.query(Mission).filter(Mission.id == flight.current_mission_id).first()
+            if old_mission:
+                old_mission.status = "completed"
+                old_mission.end_time = time.time()
+                db.commit()
+
+        # Create new mission in DB
+        new_mission = Mission(
+            start_time=time.time(),
+            status="active",
+            waypoints_json=json.dumps(waypoints)
+        )
+        db.add(new_mission)
+        db.commit()
+        db.refresh(new_mission)
+
         flight.active_flight_path   = [[w[0], w[1]] for w in waypoints]
         flight.active_waypoints_3d  = waypoints
         flight.current_waypoint_idx = 0
         flight.autonomous_mode      = True
         flight.returning_home       = False
+        flight.current_mission_id   = new_mission.id
 
         await broadcast_dashboard(
             {"type": "flight_plan", "waypoints": waypoints, "timestamp": time.time()}

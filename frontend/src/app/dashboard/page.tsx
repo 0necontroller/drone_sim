@@ -147,6 +147,24 @@ export default function Page() {
 			className="fixed inset-0 overflow-hidden"
 			style={{ background: '#000' }}
 		>
+			{/* ── Top Center Navigation Button ───────────────────────────────── */}
+			<div className="absolute top-4 left-1/2 -translate-x-1/2 z-50">
+				<button
+					onClick={() => window.location.href = '/dashboard/stats'}
+					className="flex items-center gap-2 rounded-full px-6 py-2 text-xs font-bold tracking-widest uppercase transition-all hover:scale-105 active:scale-95"
+					style={{
+						background: 'rgba(0, 0, 0, 0.6)',
+						border: '1px solid rgba(0, 255, 136, 0.4)',
+						color: '#00ff88',
+						backdropFilter: 'blur(8px)',
+						boxShadow: '0 4px 20px rgba(0, 255, 136, 0.15)'
+					}}
+				>
+					<Target className="h-4 w-4" />
+					View Mission Stats
+				</button>
+			</div>
+
 			{/* ── Layer 0: Camera Background ─────────────────────────────────── */}
 			{!pointCloudMaximized && (
 				<CameraFeed className="absolute inset-0 h-full w-full" />

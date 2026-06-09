@@ -5,6 +5,7 @@
 /.pnp
 .pnp.js
 .yarn/install-state.gz
+real_drone.mp4
 
 # testing
 /coverage

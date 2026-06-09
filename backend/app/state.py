@@ -53,6 +53,7 @@ class FlightState:
     home_x:              float = 0.0
     home_y:              float = 0.0
     home_set:            bool  = False
+    current_mission_id:  Optional[int] = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -57,6 +57,15 @@ export default function MapCanvas({
 	className = '',
 }: MapCanvasProps) {
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
+	const bgImgRef = useRef<HTMLImageElement | null>(null);
+
+	useEffect(() => {
+		const img = new Image();
+		img.onload = () => {
+			bgImgRef.current = img;
+		};
+		img.src = '/map.png';
+	}, []);
 
 	useEffect(() => {
 		const canvas = canvasRef.current;
@@ -75,7 +84,7 @@ export default function MapCanvas({
 				? worldToCanvas(focusWorld.x, focusWorld.y, mapDims, size)
 				: [size / 2, size / 2];
 
-			// Dark fallback background (visible at edges when zoomed out of SLAM bounds)
+			// Dark fallback background
 			ctx.fillStyle = '#0a0f1e';
 			ctx.fillRect(0, 0, size, size);
 
@@ -85,9 +94,9 @@ export default function MapCanvas({
 			ctx.scale(clampedZoom, clampedZoom);
 			ctx.translate(-focusCx, -focusCy);
 
-			// 1. SLAM background
-			if (slamImgRef.current) {
-				ctx.drawImage(slamImgRef.current, 0, 0, size, size);
+			// 1. Satellite background
+			if (bgImgRef.current) {
+				ctx.drawImage(bgImgRef.current, 0, 0, size, size);
 			} else {
 				ctx.fillStyle = '#0a0f1e';
 				ctx.fillRect(0, 0, size, size);

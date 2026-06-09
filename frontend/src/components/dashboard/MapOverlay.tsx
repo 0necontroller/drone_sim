@@ -61,7 +61,7 @@ interface MapOverlayProps {
 
 export default function MapOverlay({ wsUrl }: MapOverlayProps) {
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
-	const slamImgRef = useRef<HTMLImageElement | null>(null);
+	const bgImgRef = useRef<HTMLImageElement | null>(null);
 	const [people, setPeople] = useState<Victim[]>([]);
 	const [waypoints, setWaypoints] = useState<Waypoint[]>([]);
 	const [dronePos, setDronePos] = useState<{ x: number; y: number } | null>(null);
@@ -71,14 +71,23 @@ export default function MapOverlay({ wsUrl }: MapOverlayProps) {
 
 	// Supervisor state
 	const [mapDims, setMapDims] = useState<MapDims>({
-		width: 50,
-		length: 50,
-		origin_x: -25,
-		origin_z: -25,
+		width: 400,
+		length: 400,
+		origin_x: -200,
+		origin_z: -200,
 	});
 	const [confirmedDetections, setConfirmedDetections] = useState<ConfirmedDetection[]>([]);
 	const [allPedestrians, setAllPedestrians] = useState<AllPedestrian[]>([]);
 	const [supervisorActive, setSupervisorActive] = useState(false);
+
+	// Load satellite background map
+	useEffect(() => {
+		const img = new Image();
+		img.onload = () => {
+			bgImgRef.current = img;
+		};
+		img.src = '/map.png';
+	}, []);
 
 	// WebSocket handler for map messages
 	useEffect(() => {
@@ -89,13 +98,7 @@ export default function MapOverlay({ wsUrl }: MapOverlayProps) {
 		ws.onmessage = (event) => {
 			try {
 				const msg = JSON.parse(event.data);
-				if (msg.type === 'slam_update') {
-					const img = new Image();
-					img.onload = () => {
-						slamImgRef.current = img;
-					};
-					img.src = `data:image/png;base64,${msg.map_b64}`;
-				} else if (msg.type === 'detections') {
+				if (msg.type === 'detections') {
 					setPeople(msg.people || []);
 				} else if (msg.type === 'flight_plan') {
 					const wps = (msg.waypoints || []).map((wp: number[]) => ({
@@ -141,9 +144,9 @@ export default function MapOverlay({ wsUrl }: MapOverlayProps) {
 		const draw = () => {
 			ctx.clearRect(0, 0, MAP_SIZE_PX, MAP_SIZE_PX);
 
-			// 1. Draw SLAM Background
-			if (slamImgRef.current) {
-				ctx.drawImage(slamImgRef.current, 0, 0, MAP_SIZE_PX, MAP_SIZE_PX);
+			// 1. Draw Satellite Background
+			if (bgImgRef.current) {
+				ctx.drawImage(bgImgRef.current, 0, 0, MAP_SIZE_PX, MAP_SIZE_PX);
 			} else {
 				// Gritty slate background matching radar look
 				ctx.fillStyle = '#0f172a';

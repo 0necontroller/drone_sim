@@ -4,7 +4,11 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import drone_api, rtc, ws_controller, ws_dashboard
+from app.database import Base, engine
+from app.routers import drone_api, rtc, stats_api, ws_controller, ws_dashboard
+
+# Create database tables
+Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Drone Control API", version="0.2.0")
 
@@ -20,3 +24,4 @@ app.include_router(drone_api.router)
 app.include_router(ws_dashboard.router)
 app.include_router(ws_controller.router)
 app.include_router(rtc.router)
+app.include_router(stats_api.router)

@@ -21,6 +21,8 @@ import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.broadcast import broadcast_dashboard
+from app.database import SessionLocal
+from app.models import Detection, Mission
 from app.services.pathfinding import astar_next_waypoint
 from app.services.yolo_service import process_frame
 from app.slam_engine import (
@@ -240,14 +242,37 @@ async def _handle_camera(payload: dict) -> None:
     # Run YOLO (throttled to 5 fps inside process_frame) in a background thread
     frame, geo_dets = await asyncio.to_thread(process_frame, frame, telem, is_searching)
 
+    new_db_detections = []
     # Deduplicate detections with a 4 m exclusion zone
     for det in geo_dets:
         if not any(
             math.sqrt((det["x"] - p["x"]) ** 2 + (det["y"] - p["y"]) ** 2) < 4.0
             for p in flight.detected_people
         ):
-            flight.detected_people.append({**det, "ts": time.time()})
+            det_data = {**det, "ts": time.time()}
+            flight.detected_people.append(det_data)
             print(f"[Camera] New detection at x={det['x']:.2f}, y={det['y']:.2f}")
+            new_db_detections.append(det_data)
+
+    if new_db_detections and flight.current_mission_id:
+        db = SessionLocal()
+        try:
+            for det in new_db_detections:
+                db_det = Detection(
+                    mission_id=flight.current_mission_id,
+                    timestamp=det["ts"],
+                    x=det["x"],
+                    y=det["y"],
+                    radius=4.0,
+                    dispatched=False,
+                    status="pending"
+                )
+                db.add(db_det)
+            db.commit()
+        except Exception as e:
+            print(f"[Camera] Error saving detections to DB: {e}")
+        finally:
+            db.close()
 
     if geo_dets:
         await broadcast_dashboard({
