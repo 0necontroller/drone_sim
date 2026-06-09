@@ -280,7 +280,7 @@ Forest {
   density 0.01
   type "cherry tree"
   randomSeed 1
-  maxHeight 12
+  maxHeight 10
   minHeight 6
   maxRadius 6
   minRadius 3
