@@ -2,15 +2,8 @@
 
 import dynamic from 'next/dynamic';
 import { useEffect, useRef, useState } from 'react';
-import {
-	Maximize2,
-	Minimize2,
-	Play,
-	Target,
-	Wifi,
-	WifiOff
-} from 'lucide-react';
-import CameraFeed from '@/components/dashboard/CameraFeed';
+import { Maximize2, Minimize2, Target, Wifi, WifiOff } from 'lucide-react';
+import DemoCameraFeed from '@/components/dashboard/DemoCameraFeed';
 import Controls from '@/components/dashboard/Controls';
 import FloatingPanel from '@/components/dashboard/FloatingPanel';
 import DroneStatsHUD from '@/components/dashboard/DroneStatsHUD';
@@ -20,7 +13,7 @@ import MissionLog from '@/components/dashboard/MissionLog';
 import { useMapData } from '@/hooks/useMapData';
 import { serverUrl } from '@/lib/config';
 import type { ControlCommand, Telemetry } from '@/types/drone';
-import Link from 'next/link';
+import SlamViewer from '@/components/dashboard/SlamViewer';
 
 const PointCloudViewer = dynamic(
 	() => import('@/components/PointCloudViewer'),
@@ -37,7 +30,7 @@ const PointCloudViewer = dynamic(
 	}
 );
 
-const WS_PATH = '/api/v1/drone/ws';
+const WS_PATH = '/api/v1/demo/ws';
 
 const toWsUrl = (base?: string, path = WS_PATH) => {
 	if (!base) return null;
@@ -154,43 +147,26 @@ export default function Page() {
 			className="fixed inset-0 overflow-hidden"
 			style={{ background: '#000' }}
 		>
-			{/* ── Top Center Navigation Button ───────────────────────────────── */}
-			<div className="absolute top-4 left-1/2 z-50 flex -translate-x-1/2 items-center">
-				<button
-					className="flex items-center gap-2 rounded-full px-6 py-2 text-xs font-bold tracking-widest uppercase transition-all hover:scale-105 active:scale-95"
+			{/* ── Top Center Demo Badge ───────────────────────────────── */}
+			<div className="absolute top-4 left-1/2 -translate-x-1/2 z-50">
+				<div
+					className="flex items-center gap-2 rounded-full px-6 py-2 text-xs font-bold tracking-widest uppercase"
 					style={{
-						background: 'rgba(0, 0, 0, 0.6)',
-						border: '1px solid rgba(0, 255, 136, 0.4)',
-						color: '#00ff88',
+						background: 'rgba(255, 0, 0, 0.4)',
+						border: '1px solid rgba(255, 100, 100, 0.6)',
+						color: '#ffaaaa',
 						backdropFilter: 'blur(8px)',
-						boxShadow: '0 4px 20px rgba(0, 255, 136, 0.15)'
+						boxShadow: '0 4px 20px rgba(255, 0, 0, 0.2)'
 					}}
 				>
-					<Link href="/dashboard/stats" className="flex items-center gap-2">
-						<Target className="h-4 w-4" />
-						View Mission Stats
-					</Link>
-				</button>
-				<button
-					className="flex items-center gap-2 rounded-full px-6 py-2 text-xs font-bold tracking-widest uppercase transition-all hover:scale-105 active:scale-95"
-					style={{
-						background: 'rgba(0, 0, 0, 0.6)',
-						border: '1px solid rgba(0, 255, 136, 0.4)',
-						color: '#00ff88',
-						backdropFilter: 'blur(8px)',
-						boxShadow: '0 4px 20px rgba(0, 255, 136, 0.15)'
-					}}
-				>
-					<Link href="/demo" className="flex items-center gap-2">
-						<Play className="h-4 w-4" />
-						Real Footage Demo
-					</Link>
-				</button>
+					<Target className="h-4 w-4" />
+					REAL FOOTAGE DEMO MODE
+				</div>
 			</div>
 
 			{/* ── Layer 0: Camera Background ─────────────────────────────────── */}
 			{!pointCloudMaximized && (
-				<CameraFeed className="absolute inset-0 h-full w-full" />
+				<DemoCameraFeed className="absolute inset-0 h-full w-full" />
 			)}
 
 			{/* Subtle vignette + scanline overlay for game feel */}

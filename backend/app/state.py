@@ -32,6 +32,11 @@ class DroneState:
         # The WebRTC CameraTrack awaits this event instead of sleeping blindly.
         self.new_frame_event = asyncio.Event()
 
+        # Demo state
+        self.demo_camera_frame: Optional[bytes] = None
+        self.demo_camera_lock = asyncio.Lock()
+        self.demo_new_frame_event = asyncio.Event()
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Autonomous / mission flight state
@@ -80,3 +85,6 @@ connections = _Connections()
 dashboard_clients: Set = set()
 controller_lock        = asyncio.Lock()
 rtc_peers: Set         = set()
+
+demo_clients: Set      = set()
+demo_rtc_peers: Set    = set()

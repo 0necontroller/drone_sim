@@ -12,7 +12,8 @@ import {
 	IconSparkles,
 	IconUser,
 	IconBuilding,
-	IconSettings
+	IconSettings,
+	IconVideo
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -54,6 +55,11 @@ const navItems = [
 		title: 'Mission Stats',
 		url: '/dashboard/stats',
 		icon: IconChartBar
+	},
+	{
+		title: 'Real Footage Demo',
+		url: '/demo',
+		icon: IconVideo
 	}
 ];
 
