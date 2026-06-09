@@ -21,6 +21,7 @@ import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.broadcast import broadcast_dashboard
+from app.services.pathfinding import astar_next_waypoint
 from app.services.yolo_service import process_frame
 from app.slam_engine import (
     LIDAR_SCAN_SIZE,
@@ -132,7 +133,7 @@ async def _handle_telemetry(payload: dict, ws: WebSocket) -> None:
 
     # ── Autonomous nav state machine ──────────────────────────────────────────
     target_wp   = None
-    target_alt  = 6.0
+    target_alt  = 11.0
     should_land = False
 
     if flight.autonomous_mode and flight.active_flight_path:
@@ -171,7 +172,17 @@ async def _handle_telemetry(payload: dict, ws: WebSocket) -> None:
     # ── Autopilot command ─────────────────────────────────────────────────────
     if (flight.autonomous_mode or flight.returning_home) and (target_wp is not None or should_land):
         if target_wp is not None:
-            bearing  = math.atan2(target_wp[1] - drone_y, target_wp[0] - drone_x)
+            async with slam_lock:
+                current_map = bytearray(slam_map_bytes)
+            
+            local_wp_x, local_wp_y = await asyncio.to_thread(
+                astar_next_waypoint,
+                drone_x, drone_y,
+                target_wp[0], target_wp[1],
+                current_map, SLAM_MAP_PIXELS, SLAM_MAP_METERS
+            )
+
+            bearing  = math.atan2(local_wp_y - drone_y, local_wp_x - drone_x)
             yaw_err  = bearing - drone_yaw
             while yaw_err >  math.pi: yaw_err -= 2 * math.pi
             while yaw_err < -math.pi: yaw_err += 2 * math.pi
@@ -309,9 +320,10 @@ async def _handle_slam_scan(payload: dict) -> None:
     async with state.lock:
         telem = dict(state.telemetry)
 
+    # Shift pose to align Webots (-200..200) with SLAM (0..400)
     pose = (
-        telem.get("x",   0.0) * 1000.0,
-        telem.get("y",   0.0) * 1000.0,
+        (telem.get("x",   0.0) + 200.0) * 1000.0,
+        (telem.get("y",   0.0) + 200.0) * 1000.0,
         telem.get("yaw", 0.0) * (180.0 / math.pi),
     )
 

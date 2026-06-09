@@ -213,7 +213,7 @@ export function useMapData(wsUrl: string | null): MapData {
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					polygon: polyPoints,
-					altitude: 6.0,
+					altitude: 11.0,
 					strip_width: sw,
 					coordinate_type: 'meters',
 				}),

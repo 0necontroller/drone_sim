@@ -384,7 +384,7 @@ export default function MapOverlay({ wsUrl }: MapOverlayProps) {
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					polygon: polyPoints,
-					altitude: 6.0,
+					altitude: 11.0,
 					strip_width: 5.0,
 					coordinate_type: 'meters'
 				})

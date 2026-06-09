@@ -73,10 +73,10 @@ async def get_world_state() -> JSONResponse:
 async def plan_flight(body: dict) -> JSONResponse:
     """Generate a lawnmower flight path and start the autonomous mission.
 
-    Body: ``{"polygon": [[x,y], ...], "altitude": 6.0, "strip_width": 10.0}``
+    Body: ``{"polygon": [[x,y], ...], "altitude": 11.0, "strip_width": 10.0}``
     """
     raw_poly = body.get("polygon", [])
-    altitude = float(body.get("altitude", 6.0))
+    altitude = float(body.get("altitude", 11.0))
     strip_w  = float(body.get("strip_width", 10.0))
 
     if len(raw_poly) < 3:

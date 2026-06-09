@@ -8,8 +8,8 @@ from breezyslam.algorithms import RMHC_SLAM
 from breezyslam.sensors import Laser
 
 SLAM_MAP_PIXELS = 800
-SLAM_MAP_METERS = 40.0
-SLAM_RESOLUTION = SLAM_MAP_METERS / SLAM_MAP_PIXELS   # 0.05 m/pixel
+SLAM_MAP_METERS = 400.0
+SLAM_RESOLUTION = SLAM_MAP_METERS / SLAM_MAP_PIXELS   # 0.5 m/pixel
 LIDAR_SCAN_SIZE = 360   # must match Webots lidar.getHorizontalResolution()
 
 _sensor = Laser(
