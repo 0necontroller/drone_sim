@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 # ── Timing constants ────────────────────────────────────────────────────────
-COMMAND_TIMEOUT   = 0.5
+COMMAND_TIMEOUT   = 2.0
 TELEMETRY_PERIOD  = 0.1
 CAMERA_PERIOD     = 0.05   # 20 fps  ← was 0.2 (5 fps)
 POINTCLOUD_PERIOD = 1.0

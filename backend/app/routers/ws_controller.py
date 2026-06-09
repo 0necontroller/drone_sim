@@ -180,9 +180,9 @@ async def _handle_telemetry(payload: dict, ws: WebSocket) -> None:
             yaw_err = dist = 0.0
 
         if drone_z >= 5.0 or should_land:
-            yaw_cmd = float(max(-0.4, min(0.4, yaw_err * 0.5))) if not should_land else 0.0
-            if not should_land and abs(yaw_err) < 0.25:
-                pitch_cmd = -0.5 if dist > 2.0 else -0.2
+            yaw_cmd = float(max(-1.5, min(1.5, yaw_err * 1.5))) if not should_land else 0.0
+            if not should_land and abs(yaw_err) < 0.35:
+                pitch_cmd = -1.5 if dist > 2.0 else -0.5
             else:
                 pitch_cmd = 0.0
         else:
