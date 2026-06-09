@@ -9,6 +9,7 @@ Receives five message types from the Webots controller:
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import math
@@ -28,10 +29,31 @@ from app.slam_engine import (
     slam_engine,
     slam_lock,
     slam_map_bytes,
+    slam_thread_lock,
 )
 from app.state import connections, controller_lock, flight, state
 
 router = APIRouter(prefix="/api/v1/drone", tags=["drone-controller"])
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SLAM Helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _run_slam_update(scan, pose):
+    """Synchronous SLAM update + PNG generation to be run in a thread."""
+    with slam_thread_lock:
+        slam_engine.update(scan, pose=pose, should_update_map=True)
+        slam_engine.getmap(slam_map_bytes)
+        x_mm, y_mm, theta_deg = slam_engine.getpos()
+
+        # Generate PNG from the map bytes (single channel 0-255)
+        arr = np.frombuffer(slam_map_bytes, dtype=np.uint8).reshape(
+            (SLAM_MAP_PIXELS, SLAM_MAP_PIXELS)
+        )
+        _, enc = cv2.imencode(".png", arr)
+        map_b64 = base64.b64encode(enc).decode("ascii")
+        return map_b64, x_mm, y_mm, theta_deg
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -204,8 +226,8 @@ async def _handle_camera(payload: dict) -> None:
         and drone_z > 1.0
     )
 
-    # Run YOLO (throttled to 5 fps inside process_frame)
-    frame, geo_dets = await process_frame(frame, telem, is_searching)
+    # Run YOLO (throttled to 5 fps inside process_frame) in a background thread
+    frame, geo_dets = await asyncio.to_thread(process_frame, frame, telem, is_searching)
 
     # Deduplicate detections with a 4 m exclusion zone
     for det in geo_dets:
@@ -287,24 +309,14 @@ async def _handle_slam_scan(payload: dict) -> None:
     async with state.lock:
         telem = dict(state.telemetry)
 
-    async with slam_lock:
-        slam_engine.update(
-            scan,
-            pose=(
-                telem.get("x",   0.0) * 1000.0,
-                telem.get("y",   0.0) * 1000.0,
-                telem.get("yaw", 0.0) * (180.0 / math.pi),
-            ),
-            should_update_map=True,
-        )
-        slam_engine.getmap(slam_map_bytes)
-        x_mm, y_mm, theta_deg = slam_engine.getpos()
-
-    np_map  = np.frombuffer(slam_map_bytes, dtype=np.uint8).reshape(
-        (SLAM_MAP_PIXELS, SLAM_MAP_PIXELS)
+    pose = (
+        telem.get("x",   0.0) * 1000.0,
+        telem.get("y",   0.0) * 1000.0,
+        telem.get("yaw", 0.0) * (180.0 / math.pi),
     )
-    _, png  = cv2.imencode(".png", np_map)
-    map_b64 = base64.b64encode(png).decode("ascii")
+
+    # Run SLAM + PNG generation in a background thread
+    map_b64, x_mm, y_mm, theta_deg = await asyncio.to_thread(_run_slam_update, scan, pose)
 
     await broadcast_dashboard({
         "type":           "slam_update",

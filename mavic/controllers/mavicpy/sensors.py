@@ -21,10 +21,8 @@ def capture_camera_jpeg(camera, quality: int = 65) -> Optional[str]:
     try:
         w, h = camera.getWidth(), camera.getHeight()
         raw  = camera.getImage()
-        frame = np.frombuffer(raw, dtype=np.uint8).reshape((h, w, 4))
-        rgb   = frame[:, :, :3][:, :, ::-1]          # BGRA → RGB
-        img   = Image.fromarray(rgb, "RGB")
-        buf   = io.BytesIO()
+        img  = Image.frombuffer("RGBA", (w, h), raw, "raw", "BGRA", 0, 1).convert("RGB")
+        buf  = io.BytesIO()
         img.save(buf, format="JPEG", quality=quality)
         return base64.b64encode(buf.getvalue()).decode("ascii")
     except Exception as exc:

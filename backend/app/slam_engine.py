@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 
 from breezyslam.algorithms import RMHC_SLAM
 from breezyslam.sensors import Laser
@@ -21,3 +22,4 @@ _sensor = Laser(
 slam_engine    = RMHC_SLAM(_sensor, SLAM_MAP_PIXELS, SLAM_MAP_METERS)
 slam_map_bytes = bytearray(SLAM_MAP_PIXELS * SLAM_MAP_PIXELS)
 slam_lock      = asyncio.Lock()
+slam_thread_lock = threading.Lock()

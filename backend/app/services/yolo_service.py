@@ -45,7 +45,7 @@ HFOV         = 1.047   # ~60° horizontal FOV
 # Public API
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def process_frame(
+def process_frame(
     frame: bytes,
     telem: dict,
     is_searching: bool,
