@@ -3,3 +3,4 @@ commands.md
 ai/
 
 __pycache__/
+backend/drone_sim.db

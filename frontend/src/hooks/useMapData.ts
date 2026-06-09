@@ -36,6 +36,14 @@ export interface Waypoint {
 	y: number;
 }
 
+export interface LogEntry {
+	id: string;
+	type: 'detection' | 'mission_start' | 'mission_complete' | 'abort' | 'waypoints' | 'info';
+	message: string;
+	timestamp: number;
+	data?: { x?: number; y?: number; id?: string };
+}
+
 /** Convert Webots world coordinates to canvas pixel coordinates. */
 export function worldToCanvas(
 	worldX: number,
@@ -64,10 +72,16 @@ export interface MapData {
 	confirmedDetections: ConfirmedDetection[];
 	allPedestrians: AllPedestrian[];
 	supervisorActive: boolean;
-	launchMission: () => Promise<void>;
+	missionLog: LogEntry[];
+	launchMission: (opts?: { stripWidth?: number }) => Promise<void>;
 	stopMission: () => Promise<void>;
 	handleCanvasClick: (e: React.MouseEvent<HTMLCanvasElement>, canvasSize?: number) => void;
 }
+
+/** Maximum plausible drone jump in one telemetry tick (metres). Larger jumps are rejected as glitches. */
+const MAX_JUMP_M = 18;
+/** Exponential moving-average alpha for drone position smoothing (0=frozen, 1=raw). */
+const EMA_ALPHA = 0.35;
 
 export function useMapData(wsUrl: string | null): MapData {
 	const slamImgRef = useRef<HTMLImageElement | null>(null);
@@ -78,14 +92,51 @@ export function useMapData(wsUrl: string | null): MapData {
 	const [polyPoints, setPolyPoints] = useState<[number, number][]>([]);
 	const [missionActive, setMissionActive] = useState(false);
 	const [mapDims, setMapDims] = useState<MapDims>({
-		width: 50,
-		length: 50,
-		origin_x: -25,
-		origin_z: -25,
+		width: 50, length: 50, origin_x: -25, origin_z: -25,
 	});
 	const [confirmedDetections, setConfirmedDetections] = useState<ConfirmedDetection[]>([]);
 	const [allPedestrians, setAllPedestrians] = useState<AllPedestrian[]>([]);
 	const [supervisorActive, setSupervisorActive] = useState(false);
+	const [missionLog, setMissionLog] = useState<LogEntry[]>([]);
+
+	// Drone position smoothing state (lives outside React to avoid stale closures)
+	const smoothedDronePos = useRef<{ x: number; y: number } | null>(null);
+	// Track which detection IDs we've already logged
+	const knownDetectionIds = useRef<Set<string>>(new Set());
+
+	/** Append a log entry (newest-first, capped at 100). */
+	const addLog = useRef((entry: Omit<LogEntry, 'id' | 'timestamp'>) => {
+		setMissionLog((prev) => [
+			{
+				...entry,
+				id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+				timestamp: Date.now(),
+			},
+			...prev,
+		].slice(0, 100));
+	});
+
+	/** Apply outlier rejection + EMA smoothing to a raw drone position. */
+	const acceptDronePos = useRef((raw: { x: number; y: number }) => {
+		const last = smoothedDronePos.current;
+		if (last) {
+			const dx = raw.x - last.x;
+			const dy = raw.y - last.y;
+			const dist = Math.sqrt(dx * dx + dy * dy);
+			if (dist > MAX_JUMP_M) return; // reject glitch
+			// EMA smooth
+			const smoothed = {
+				x: last.x * (1 - EMA_ALPHA) + raw.x * EMA_ALPHA,
+				y: last.y * (1 - EMA_ALPHA) + raw.y * EMA_ALPHA,
+			};
+			smoothedDronePos.current = smoothed;
+			setDronePos({ ...smoothed });
+		} else {
+			// First reading — accept as-is
+			smoothedDronePos.current = { ...raw };
+			setDronePos({ ...raw });
+		}
+	});
 
 	useEffect(() => {
 		if (!wsUrl) return;
@@ -94,30 +145,53 @@ export function useMapData(wsUrl: string | null): MapData {
 		ws.onmessage = (event) => {
 			try {
 				const msg = JSON.parse(event.data);
+
 				if (msg.type === 'slam_update') {
 					const img = new Image();
 					img.onload = () => { slamImgRef.current = img; };
 					img.src = `data:image/png;base64,${msg.map_b64}`;
+
 				} else if (msg.type === 'detections') {
 					setPeople(msg.people || []);
+
 				} else if (msg.type === 'flight_plan') {
 					const wps = (msg.waypoints || []).map((wp: number[]) => ({ x: wp[0], y: wp[1] }));
 					setWaypoints(wps);
 					setMissionActive(true);
+					addLog.current({ type: 'waypoints', message: `Flight plan loaded — ${wps.length} waypoints` });
+
 				} else if (msg.type === 'telemetry') {
 					const d = msg.data || msg;
 					if (typeof d.x === 'number' && typeof d.y === 'number') {
-						setDronePos({ x: d.x, y: d.y });
+						acceptDronePos.current({ x: d.x, y: d.y });
 					}
+
 				} else if (msg.type === 'mission_complete') {
 					setMissionActive(false);
 					setWaypoints([]);
+					addLog.current({ type: 'mission_complete', message: 'Mission complete — all waypoints visited' });
+
 				} else if (msg.type === 'supervisor_state') {
 					if (msg.map) setMapDims(msg.map);
-					if (msg.confirmed_detections) setConfirmedDetections(msg.confirmed_detections);
 					if (msg.all_pedestrians) setAllPedestrians(msg.all_pedestrians);
-					if (msg.drone) setDronePos(msg.drone);
+					if (msg.drone) acceptDronePos.current(msg.drone);
 					if (!supervisorActive) setSupervisorActive(true);
+
+					// Detect new confirmed detections and log them
+					if (msg.confirmed_detections) {
+						const dets: ConfirmedDetection[] = msg.confirmed_detections;
+						dets.forEach((det) => {
+							if (!knownDetectionIds.current.has(det.id)) {
+								knownDetectionIds.current.add(det.id);
+								addLog.current({
+									type: 'detection',
+									message: `Human detected — ${det.id.replace('PED_', 'Target #')}`,
+									data: { x: det.x, y: det.y, id: det.id },
+								});
+							}
+						});
+						setConfirmedDetections(dets);
+					}
 				}
 			} catch {
 				// ignore malformed payloads
@@ -127,19 +201,20 @@ export function useMapData(wsUrl: string | null): MapData {
 		return () => ws.close();
 	}, [wsUrl, supervisorActive]);
 
-	const launchMission = async () => {
+	const launchMission = async (opts?: { stripWidth?: number }) => {
 		if (polyPoints.length < 3) {
 			alert('Please define search boundaries by plotting at least 3 points.');
 			return;
 		}
 		try {
+			const sw = opts?.stripWidth ?? 10.0;
 			const res = await fetch(`${serverUrl}/api/v1/drone/plan_flight`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					polygon: polyPoints,
-					altitude: 6.0,
-					strip_width: 5.0,
+					altitude: 11.0,
+					strip_width: sw,
 					coordinate_type: 'meters',
 				}),
 			});
@@ -150,6 +225,10 @@ export function useMapData(wsUrl: string | null): MapData {
 			setDrawingPoly(false);
 			setPolyPoints([]);
 			setMissionActive(true);
+			addLog.current({
+				type: 'mission_start',
+				message: `Search launched — ${wps.length} waypoints @ ${sw}m strip`,
+			});
 		} catch {
 			alert('Failed to transmit flight plan coordinates.');
 		}
@@ -161,6 +240,7 @@ export function useMapData(wsUrl: string | null): MapData {
 			if (res.ok) {
 				setMissionActive(false);
 				setWaypoints([]);
+				addLog.current({ type: 'abort', message: 'Mission aborted — returning to hover' });
 			}
 		} catch {
 			// ignore
@@ -174,7 +254,6 @@ export function useMapData(wsUrl: string | null): MapData {
 		if (!drawingPoly) return;
 		const canvas = e.currentTarget;
 		const rect = canvas.getBoundingClientRect();
-		// Scale click position from display coords to canvas coords
 		const cx = (e.clientX - rect.left) * (canvasSize / rect.width);
 		const cy = (e.clientY - rect.top) * (canvasSize / rect.height);
 		const scaleX = canvasSize / mapDims.width;
@@ -198,6 +277,7 @@ export function useMapData(wsUrl: string | null): MapData {
 		confirmedDetections,
 		allPedestrians,
 		supervisorActive,
+		missionLog,
 		launchMission,
 		stopMission,
 		handleCanvasClick,

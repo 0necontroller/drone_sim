@@ -15,3 +15,5 @@ build/
 *.egg-info/
 
 yolo26n.pt
+drone_sim.db
+real_drone.mp4

@@ -12,7 +12,8 @@ import {
 	IconSparkles,
 	IconUser,
 	IconBuilding,
-	IconSettings
+	IconSettings,
+	IconVideo
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -39,43 +40,26 @@ import {
 } from '@/components/ui/collapsible';
 
 const user = {
-	name: 'Recruiter',
-	email: 'recruiter@cognicv.ai',
-	avatar: '/avatars/recruiter.jpg'
+	name: 'Pilot',
+	email: 'pilot@drone-ops.com',
+	avatar: '/avatars/pilot.jpg'
 };
 
 const navItems = [
 	{
-		title: 'Home',
+		title: 'Live Dashboard',
 		url: '/dashboard',
 		icon: IconHome
 	},
 	{
-		title: 'Job Listings',
-		url: '/dashboard/jobs',
-		icon: IconBriefcase,
-		children: [
-			{ title: 'All Jobs', url: '/dashboard/jobs', icon: IconBriefcase },
-			{ title: 'Create New Job', url: '/dashboard/jobs/new', icon: IconPlus }
-		]
+		title: 'Mission Stats',
+		url: '/dashboard/stats',
+		icon: IconChartBar
 	},
 	{
-		title: 'Talent Pool',
-		url: '/dashboard/talent',
-		icon: IconUsers
-	},
-	{
-		title: 'Settings',
-		url: '/dashboard/settings',
-		icon: IconSettings,
-		children: [
-			{ title: 'Profile', url: '/dashboard/profile', icon: IconUser },
-			{
-				title: 'Organization',
-				url: '/dashboard/organization',
-				icon: IconBuilding
-			}
-		]
+		title: 'Real Footage Demo',
+		url: '/demo',
+		icon: IconVideo
 	}
 ];
 

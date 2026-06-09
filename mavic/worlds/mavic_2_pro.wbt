@@ -29,8 +29,8 @@ WorldInfo {
   }
 }
 Viewpoint {
-  orientation 0.04205732763619796 0.018007445616985366 -0.9989529083467612 3.2845788944752967
-  position 8.096939678132271 -1.2874578830086358 1.3059177633761316
+  orientation 0.11564425483154396 0.018946472197448348 -0.9931099825878945 3.1776343381151713
+  position 4.500685350952177 -0.2816884678418242 1.3709455629371106
   near 0.2
   follow "Mavic 2 PRO"
   followSmoothness 0.2
@@ -40,7 +40,7 @@ TexturedBackground {
 }
 TexturedBackgroundLight {
 }
-Floor {
+DEF FLOOR Floor {
   size 400 400
   tileSize 6 6
   appearance SandyGround {
@@ -118,43 +118,43 @@ Fluid {
     size 20 15 1.6
   }
 }
-Pedestrian {
+DEF PED_4 Pedestrian {
   translation 7.09 22.66 1.37
   name "PED_4"
 }
-Pedestrian {
+DEF PED_8 Pedestrian {
   translation 53.75 2.36 2.26
   name "PED_8"
   shirtColor 0.909865 0.909483 0.236072
 }
-Pedestrian {
+DEF PED_9 Pedestrian {
   translation 50.63 -5.83 2.64
   name "PED_9"
   shirtColor 0.907195 0.126513 0.0757153
 }
-Pedestrian {
+DEF PED_3 Pedestrian {
   translation -30.31 28.32 1.37
   name "PED_3"
 }
-Pedestrian {
+DEF PED_1 Pedestrian {
   translation -31.29 29.93 1.37
   name "PED_1"
   shirtColor 0.807797 0.275807 0.0820478
 }
-Pedestrian {
+DEF PED_5 Pedestrian {
   translation 4.52 -20.08 1.47
   name "PED_5"
   shirtColor 0.807797 0.275807 0.0820478
 }
-Pedestrian {
+DEF PED_0 Pedestrian {
   translation -11.03 -4.3 1.27
   name "PED_0"
 }
-Pedestrian {
+DEF PED_7 Pedestrian {
   translation -36.68 1.95 1.37
   name "PED_7"
 }
-Pedestrian {
+DEF PED_2 Pedestrian {
   translation -46.87 -22.18 1.37
   name "PED_2"
 }
@@ -175,7 +175,7 @@ Road {
     type "black stone"
   }
 }
-Pedestrian {
+DEF PED_6 Pedestrian {
   translation -19.47 10.17 1.27
   name "PED_6"
   shirtColor 0.807797 0.275807 0.0820478
@@ -280,7 +280,7 @@ Forest {
   density 0.01
   type "cherry tree"
   randomSeed 1
-  maxHeight 12
+  maxHeight 10
   minHeight 6
   maxRadius 6
   minRadius 3
