@@ -193,14 +193,16 @@ async def _handle_camera(payload: dict) -> None:
     except Exception:
         return
 
+    async with state.lock:
+        telem = dict(state.telemetry)
+
+    drone_z = telem.get("z", 0.0)
     is_searching = (
         flight.autonomous_mode
         and flight.active_flight_path
-        and 0 < flight.current_waypoint_idx < len(flight.active_flight_path)
+        and flight.current_waypoint_idx < len(flight.active_flight_path)
+        and drone_z > 1.0
     )
-
-    async with state.lock:
-        telem = dict(state.telemetry)
 
     # Run YOLO (throttled to 5 fps inside process_frame)
     frame, geo_dets = await process_frame(frame, telem, is_searching)
