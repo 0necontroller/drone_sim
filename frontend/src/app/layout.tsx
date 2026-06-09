@@ -18,14 +18,14 @@ const dmSans = DM_Sans({
 });
 
 export const metadata: Metadata = {
-	title: 'Your wesite title | Goes here for now',
-	description: 'This is a custom description for your website',
-	metadataBase: new URL('https://yourwebsite.com'),
+	title: 'Autonomous Drones',
+	description: 'Autonomous drones',
+	metadataBase: new URL('https://autonomous-drones.vercel.app'),
 	openGraph: {
 		type: 'website',
 		locale: 'en_US',
 		url: '/',
-		images: '/opengraph-image.png' // TODO: Update extension for your image
+		images: '/opengraph-image.png'
 	},
 	robots: {
 		index: true,
