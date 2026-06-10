@@ -142,6 +142,7 @@ async def plan_flight(body: dict, db: Session = Depends(get_db)) -> JSONResponse
         flight.autonomous_mode      = True
         flight.returning_home       = False
         flight.current_mission_id   = new_mission.id
+        flight.detected_people      = []
 
         await broadcast_dashboard(
             {"type": "flight_plan", "waypoints": waypoints, "timestamp": time.time()}

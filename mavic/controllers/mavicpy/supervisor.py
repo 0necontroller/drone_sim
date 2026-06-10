@@ -28,8 +28,6 @@ class SupervisorManager:
             node = self._robot.getFromDef(name)
             if node:
                 self._ped_nodes[name] = node
-            else:
-                break
         print(
             f"[Supervisor] Found {len(self._ped_nodes)} pedestrian nodes: "
             f"{list(self._ped_nodes.keys())}"

@@ -16,6 +16,7 @@ export interface ConfirmedDetection {
 	id: string;
 	x: number;
 	y: number;
+	image_url?: string;
 }
 
 export interface AllPedestrian {
@@ -26,9 +27,11 @@ export interface AllPedestrian {
 }
 
 export interface Victim {
+	id?: string;
 	x: number;
 	y: number;
 	ts: number;
+	image_url?: string;
 }
 
 export interface Waypoint {
@@ -41,7 +44,7 @@ export interface LogEntry {
 	type: 'detection' | 'mission_start' | 'mission_complete' | 'abort' | 'waypoints' | 'info';
 	message: string;
 	timestamp: number;
-	data?: { x?: number; y?: number; id?: string };
+	data?: { x?: number; y?: number; id?: string; imageUrl?: string };
 }
 
 /** Convert Webots world coordinates to canvas pixel coordinates. */
@@ -82,6 +85,13 @@ export interface MapData {
 const MAX_JUMP_M = 18;
 /** Exponential moving-average alpha for drone position smoothing (0=frozen, 1=raw). */
 const EMA_ALPHA = 0.35;
+
+function resolveImageUrl(path?: string): string | undefined {
+	if (!path) return undefined;
+	if (/^https?:\/\//.test(path)) return path;
+	if (!serverUrl) return path;
+	return `${serverUrl}${path}`;
+}
 
 export function useMapData(wsUrl: string | null): MapData {
 	const slamImgRef = useRef<HTMLImageElement | null>(null);
@@ -186,7 +196,12 @@ export function useMapData(wsUrl: string | null): MapData {
 								addLog.current({
 									type: 'detection',
 									message: `Human detected — ${det.id.replace('PED_', 'Target #')}`,
-									data: { x: det.x, y: det.y, id: det.id },
+									data: {
+										x: det.x,
+										y: det.y,
+										id: det.id,
+										imageUrl: resolveImageUrl(det.image_url),
+									},
 								});
 							}
 						});

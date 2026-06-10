@@ -5,7 +5,7 @@ Provides ``process_frame()`` — a single async call that:
   2. Runs YOLO (if a mission is active and enough time has passed)
   3. Draws bounding boxes
   4. Back-projects person bounding-box centres to world (x, y) coordinates
-  5. Returns (annotated_jpeg_bytes, [geo_detections])
+  5. Returns (annotated_jpeg_bytes, [geo_detections], person_seen)
 
 YOLO is throttled to at most YOLO_FPS_MAX runs per second to avoid
 saturating the CPU when the camera is running at 20 fps.
@@ -49,8 +49,8 @@ def process_frame(
     frame: bytes,
     telem: dict,
     is_searching: bool,
-) -> tuple[bytes, list]:
-    """Run YOLO on *frame* and return ``(annotated_jpeg, geo_detections)``.
+) -> tuple[bytes, list, bool]:
+    """Run YOLO on *frame* and return ``(annotated_jpeg, geo_detections, person_seen)``.
 
     If the mission is not active, or the throttle interval has not elapsed,
     the original frame is returned unchanged with an empty detection list.
@@ -58,18 +58,18 @@ def process_frame(
     global _last_yolo_run
 
     if not is_searching or yolo_model is None:
-        return frame, []
+        return frame, [], False
 
     now = time.monotonic()
     if now - _last_yolo_run < _YOLO_INTERVAL:
-        return frame, []
+        return frame, [], False
     _last_yolo_run = now
 
     try:
         arr = np.frombuffer(frame, np.uint8)
         img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
         if img is None:
-            return frame, []
+            return frame, [], False
 
         results = yolo_model.predict(source=img, classes=[0, 2], conf=0.40, verbose=False)
         h_img, w_img = img.shape[:2]
@@ -83,6 +83,7 @@ def process_frame(
         )
 
         geo_dets: list[dict] = []
+        person_seen = False
 
         for result in results:
             for box in result.boxes:
@@ -99,17 +100,18 @@ def process_frame(
                 )
 
                 if cls_id == 0:   # persons only for geo-tagging
+                    person_seen = True
                     u, v = (x1 + x2) / 2.0, (y1 + y2) / 2.0
                     geo = _project_to_ground(u, v, w_img, h_img, fx, drone_xyz, R)
                     if geo:
                         geo_dets.append(geo)
 
         _, enc = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 65])
-        return enc.tobytes(), geo_dets
+        return enc.tobytes(), geo_dets, person_seen
 
     except Exception as exc:
         print(f"[YOLO] Processing error: {exc}")
-        return frame, []
+        return frame, [], False
 
 
 # ─────────────────────────────────────────────────────────────────────────────

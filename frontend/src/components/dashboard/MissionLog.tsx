@@ -1,16 +1,17 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
 import {
 	AlertTriangle,
 	CheckCircle2,
-	XCircle,
-	Radio,
+	Info,
 	Navigation,
-	Info
+	Radio,
+	XCircle
 } from 'lucide-react';
+import Image from 'next/image';
+import { useEffect, useRef } from 'react';
+import type { LogEntry } from '@/hooks/useMapData';
 import FloatingPanel from './FloatingPanel';
-import { type LogEntry } from '@/hooks/useMapData';
 
 interface MissionLogProps {
 	entries: LogEntry[];
@@ -126,6 +127,26 @@ function LogRow({ entry }: { entry: LogEntry }) {
 					>
 						{entry.data.x.toFixed(1)}m, {entry.data.y.toFixed(1)}m
 					</p>
+				)}
+				{entry.type === 'detection' && entry.data?.imageUrl && (
+					<div
+						className="relative mt-1.5 h-20 w-full overflow-hidden rounded-md"
+						style={{
+							border: '1px solid rgba(239,68,68,0.22)',
+							background: 'rgba(0,0,0,0.35)'
+						}}
+					>
+						<Image
+							src={entry.data.imageUrl}
+							alt={
+								entry.data.id ? `${entry.data.id} detection` : 'Detection frame'
+							}
+							fill
+							unoptimized
+							className="object-cover"
+							sizes="280px"
+						/>
+					</div>
 				)}
 			</div>
 		</div>
