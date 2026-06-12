@@ -2,7 +2,7 @@
 
 An autonomous search-and-rescue (SAR) system designed to detect and locate stranded individuals in a simulated flood disaster scenario. Using **Webots** for physics-based flight simulation of a DJI Mavic 2 Pro, **FastAPI** for real-time telemetry processing, SLAM mapping, and YOLO-based computer vision, and a modern **Next.js** dashboard for remote live tracking.
 
-![Dashboard Screenshot](frontend/public/screenshot.webp)
+![Dashboard Screenshot](./frontend/public/screenshot.webp)
 
 ---
 
