@@ -95,20 +95,40 @@ drone_sim/
 Follow these instructions to run the full simulation locally.
 
 ### 1. Backend Setup
-1. Navigate to the backend directory:
+1. **Python Version**: Pin and ensure you are using Python version **3.12.13**.
+2. Navigate to the backend directory:
    ```bash
    cd backend
    ```
-2. Create and activate a Python virtual environment:
+3. Create and activate a Python virtual environment:
    ```bash
    python -m venv .venv
    source .venv/bin/activate
    ```
-3. Install the required dependencies:
+4. Install the **BreezySLAM** package:
+   This package needs to be cloned and installed from source. Run the following commands:
+   ```bash
+   # Navigate to the parent directory
+   cd ..
+   # Clone the repository
+   git clone https://github.com/simondlevy/BreezySLAM
+   # Navigate into BreezySLAM's python directory
+   cd BreezySLAM/python
+   # Install system prerequisites
+   sudo apt-get update && sudo apt-get install git build-essential python3-dev
+   # Install BreezySLAM
+   pip install .
+   # Return to the backend directory
+   cd ../../backend
+   ```
+5. Install the required dependencies:
    ```bash
    pip install -r requirements.txt
    ```
-4. Start the FastAPI server:
+   > [!TIP]
+   > If installing requirements fails, edit [requirements.txt](file:///Users/ab/Documents/school/Project%204th/auto_drone/backend/requirements.txt), remove the `breezyslam` line, and install it manually as described in step 4.
+
+6. Start the FastAPI server:
    ```bash
    uvicorn app.main:app --reload --port 8000
    ```
