@@ -71,7 +71,7 @@ async def run_demo_loop():
         frame_bytes = enc.tobytes()
 
         # Run YOLO in background thread to not block the event loop
-        annotated_bytes, geo_dets, _person_seen = await asyncio.to_thread(
+        annotated_bytes, geo_dets = await asyncio.to_thread(
             process_frame, frame_bytes, telem, True
         )
 

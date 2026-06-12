@@ -1,5 +1,5 @@
 """Pydantic schemas for API requests and responses."""
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 from typing import List, Optional
 
 # --- Detections ---
@@ -22,7 +22,8 @@ class DetectionOut(DetectionBase):
     id: int
     mission_id: int
 
-    model_config = ConfigDict(from_attributes=True)
+    class Config:
+        orm_mode = True
 
 
 # --- Missions ---
@@ -39,4 +40,5 @@ class MissionOut(MissionBase):
     end_time: Optional[float] = None
     detections: List[DetectionOut] = []
 
-    model_config = ConfigDict(from_attributes=True)
+    class Config:
+        orm_mode = True

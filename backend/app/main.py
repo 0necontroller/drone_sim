@@ -1,11 +1,8 @@
 """Drone Control API — application factory."""
 from __future__ import annotations
 
-from pathlib import Path
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
 from app.database import Base, engine
 from app.routers import demo_api, drone_api, rtc, stats_api, ws_controller, ws_dashboard
@@ -15,9 +12,6 @@ from app.services.demo_worker import start_demo_worker
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Drone Control API", version="0.2.0")
-static_dir = Path(__file__).resolve().parent.parent / "static"
-static_dir.mkdir(parents=True, exist_ok=True)
-app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 @app.on_event("startup")
 async def startup_event():
